@@ -330,7 +330,9 @@ describe("startGatewayPostAttachRuntime", () => {
               resolvePrewarm = () => resolve(undefined);
             }),
         );
-        const startChannels = vi.fn(async () => undefined);
+        const startChannels = vi.fn(async () => {
+          expect(prewarmPrimaryModel).not.toHaveBeenCalled();
+        });
 
         const sidecarsPromise = startGatewaySidecars({
           cfg: {

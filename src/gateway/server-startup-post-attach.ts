@@ -189,16 +189,18 @@ function schedulePrimaryModelPrewarm(
   },
   prewarm: typeof prewarmConfiguredPrimaryModel = prewarmConfiguredPrimaryModel,
 ): void {
-  void measureStartup(params.startupTrace, "sidecars.model-prewarm", () =>
-    prewarmConfiguredPrimaryModelWithTimeout(
-      {
-        cfg: params.cfg,
-        log: params.log,
-      },
-      prewarm,
-    ),
-  ).catch((err) => {
-    params.log.warn(`startup model warmup failed: ${String(err)}`);
+  setImmediate(() => {
+    void measureStartup(params.startupTrace, "sidecars.model-prewarm", () =>
+      prewarmConfiguredPrimaryModelWithTimeout(
+        {
+          cfg: params.cfg,
+          log: params.log,
+        },
+        prewarm,
+      ),
+    ).catch((err) => {
+      params.log.warn(`startup model warmup failed: ${String(err)}`);
+    });
   });
 }
 
