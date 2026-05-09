@@ -967,6 +967,30 @@ describe("grouped chat rendering", () => {
         ?.getAttribute("src"),
     ).toBe("data:image/png;base64,cG5n");
 
+    const audioContainer = document.createElement("div");
+    renderAssistantMessage(
+      audioContainer,
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Audio reply" },
+          {
+            type: "audio",
+            source: {
+              type: "base64",
+              media_type: "audio/mpeg",
+              data: "//uQAA==",
+            },
+          },
+        ],
+        timestamp: Date.now(),
+      },
+      { showToolCalls: false },
+    );
+    expect(audioContainer.querySelector("audio")?.getAttribute("src")).toBe(
+      "data:audio/mpeg;base64,//uQAA==",
+    );
+
     container = renderUserMedia({
       id: "user-history-image-blocked",
       role: "user",

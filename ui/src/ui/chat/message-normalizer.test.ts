@@ -339,6 +339,36 @@ describe("message-normalizer", () => {
       ]);
     });
 
+    it("normalizes structured base64 audio content blocks as renderable attachments", () => {
+      const result = normalizeMessage({
+        role: "assistant",
+        content: [
+          { type: "text", text: "Audio reply" },
+          {
+            type: "audio",
+            source: {
+              type: "base64",
+              media_type: "audio/mpeg",
+              data: "//uQAA==",
+            },
+          },
+        ],
+      });
+
+      expect(result.content).toEqual([
+        { type: "text", text: "Audio reply" },
+        {
+          type: "attachment",
+          attachment: {
+            url: "data:audio/mpeg;base64,//uQAA==",
+            kind: "audio",
+            label: "Audio",
+            mimeType: "audio/mpeg",
+          },
+        },
+      ]);
+    });
+
     it("detects tool result by toolCallId", () => {
       const result = normalizeMessage({
         role: "assistant",
