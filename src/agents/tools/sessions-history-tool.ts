@@ -100,6 +100,17 @@ function sanitizeHistoryContentBlock(block: unknown): {
       entry.bytes = bytes;
     }
   }
+  if (type === "audio" && entry.source && typeof entry.source === "object") {
+    const source = { ...(entry.source as Record<string, unknown>) };
+    const data = readStringValue(source.data);
+    if (source.type === "base64" && data) {
+      delete source.data;
+      source.omitted = true;
+      source.bytes = data.length;
+      entry.source = source;
+      truncated = true;
+    }
+  }
   return { block: entry, truncated, redacted };
 }
 

@@ -392,7 +392,7 @@ describe("injectTimestamp", () => {
 });
 
 describe("sanitizeChatHistoryMessages", () => {
-  it("redacts base64 audio content blocks from chat history", () => {
+  it("preserves base64 audio content blocks for chat history display", () => {
     const data = Buffer.from("voice-bytes").toString("base64");
     const result = sanitizeChatHistoryMessages([
       {
@@ -422,8 +422,7 @@ describe("sanitizeChatHistoryMessages", () => {
             source: {
               type: "base64",
               media_type: "audio/mp3",
-              omitted: true,
-              bytes: Buffer.byteLength(data, "utf8"),
+              data,
             },
           },
         ],

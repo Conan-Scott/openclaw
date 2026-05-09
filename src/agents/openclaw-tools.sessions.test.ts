@@ -608,6 +608,56 @@ describe("sessions tools", () => {
     expect(thinkingBlock?.thinkingSignature).toBeUndefined();
   });
 
+  it("sessions_history strips base64 audio content blocks", async () => {
+    const data = Buffer.from("voice-bytes").toString("base64");
+    callGatewayMock.mockImplementation(async (opts: unknown) => {
+      const request = opts as { method?: string };
+      if (request.method === "chat.history") {
+        return {
+          messages: [
+            {
+              role: "assistant",
+              content: [
+                { type: "text", text: "Audio reply" },
+                {
+                  type: "audio",
+                  source: {
+                    type: "base64",
+                    media_type: "audio/mpeg",
+                    data,
+                  },
+                },
+              ],
+            },
+          ],
+        };
+      }
+      return {};
+    });
+
+    const tool = createOpenClawTools().find((candidate) => candidate.name === "sessions_history");
+    if (!tool) {
+      throw new Error("missing sessions_history tool");
+    }
+
+    const result = await tool.execute("call-audio-history", {
+      sessionKey: "main",
+      includeTools: true,
+    });
+    const details = result.details as {
+      messages?: Array<{ content?: Array<{ type?: string; source?: Record<string, unknown> }> }>;
+      contentTruncated?: boolean;
+    };
+    const audioBlock = details.messages?.[0]?.content?.find((block) => block.type === "audio");
+    expect(audioBlock?.source).toEqual({
+      type: "base64",
+      media_type: "audio/mpeg",
+      omitted: true,
+      bytes: data.length,
+    });
+    expect(details.contentTruncated).toBe(true);
+  });
+
   it("sessions_history enforces a hard byte cap even when a single message is huge", async () => {
     callGatewayMock.mockImplementation(async (opts: unknown) => {
       const request = opts as { method?: string };
