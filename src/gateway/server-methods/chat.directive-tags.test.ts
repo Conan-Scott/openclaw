@@ -676,14 +676,86 @@ describe("chat directive tag stripping for non-streaming final payloads", () => 
               type: "audio",
               label: "reply.mp3",
               source: {
-                type: "base64",
+                type: "url",
                 media_type: "audio/mpeg",
+                url: audioPath,
               },
             },
           ],
         },
       });
     });
+  });
+
+  it("persists agent-run TTS tool media even when the final assistant text is separate", async () => {
+    const transcriptDir = createTranscriptFixture("openclaw-chat-send-agent-tts-tool-");
+    const audioPath = path.join(transcriptDir, "tool-tts.mp3");
+    fs.writeFileSync(audioPath, Buffer.from([0xff, 0xfb, 0x90, 0x00]));
+    mockState.config = {
+      agents: {
+        defaults: {
+          workspace: transcriptDir,
+        },
+      },
+    };
+    mockState.triggerAgentRunStart = true;
+    mockState.dispatchedReplies = [
+      {
+        kind: "tool",
+        payload: {
+          text: "(spoken) hello",
+          mediaUrl: audioPath,
+          mediaUrls: [audioPath],
+          trustedLocalMedia: true,
+          audioAsVoice: true,
+        },
+      },
+      {
+        kind: "final",
+        payload: {
+          text: "This is the visible text reply.",
+        },
+      },
+    ];
+    const respond = vi.fn();
+    const context = createChatContext();
+
+    await runNonStreamingChatSend({
+      context,
+      respond,
+      idempotencyKey: "idem-agent-tts-tool",
+      expectBroadcast: false,
+      waitFor: "dedupe",
+    });
+
+    const assistantUpdates = mockState.emittedTranscriptUpdates.filter(
+      (update) =>
+        typeof update.message === "object" &&
+        update.message !== null &&
+        (update.message as { role?: unknown }).role === "assistant",
+    );
+    expect(assistantUpdates).toHaveLength(1);
+    expect(assistantUpdates[0]).toMatchObject({
+      message: {
+        role: "assistant",
+        idempotencyKey: "idem-agent-tts-tool:assistant-media",
+        content: [
+          {
+            type: "audio",
+            label: "tool-tts.mp3",
+            source: {
+              type: "url",
+              media_type: "audio/mpeg",
+              url: audioPath,
+            },
+          },
+        ],
+      },
+    });
+    expect(JSON.stringify(assistantUpdates[0]?.message)).not.toContain("(spoken) hello");
+    expect(JSON.stringify(assistantUpdates[0]?.message)).not.toContain(
+      "This is the visible text reply.",
+    );
   });
 
   it("persists auto-TTS final media as audio-only so webchat does not duplicate assistant text", async () => {
@@ -738,8 +810,9 @@ describe("chat directive tag stripping for non-streaming final payloads", () => 
             type: "audio",
             label: "tts.mp3",
             source: {
-              type: "base64",
+              type: "url",
               media_type: "audio/mpeg",
+              url: audioPath,
             },
           },
         ],
@@ -883,8 +956,9 @@ describe("chat directive tag stripping for non-streaming final payloads", () => 
         {
           type: "audio",
           source: {
-            type: "base64",
+            type: "url",
             media_type: "audio/mpeg",
+            url: audioPath,
           },
         },
       ],

@@ -2481,10 +2481,9 @@ export const chatHandlers: GatewayRequestHandlers = {
               // to "final" so the downstream audio extraction path can pick them up.
               // Strip text to avoid leaking tool summary into the combined reply.
               if (isMediaBearingPayload(payload)) {
-                deliveredReplies.push({
-                  payload: { ...payload, text: undefined },
-                  kind: "final",
-                });
+                const mediaPayload = { ...payload, text: undefined };
+                deliveredReplies.push({ payload: mediaPayload, kind: "final" });
+                await appendWebchatAgentMediaTranscriptIfNeeded(mediaPayload);
               }
               break;
           }

@@ -20,7 +20,7 @@ describe("buildWebchatAudioContentBlocksFromReplyPayloads", () => {
     tmpDir = undefined;
   });
 
-  it("embeds a local audio file as a base64 gateway chat block when it is under localRoots", async () => {
+  it("references a local audio file as an assistant-media URL block when it is under localRoots", async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-webchat-audio-"));
     const audioPath = path.join(tmpDir, "clip.mp3");
     fs.writeFileSync(audioPath, Buffer.from([0xff, 0xfb, 0x90, 0x00]));
@@ -33,16 +33,13 @@ describe("buildWebchatAudioContentBlocksFromReplyPayloads", () => {
     expect(blocks).toHaveLength(1);
     const block = blocks[0] as {
       type?: string;
-      source?: { type?: string; media_type?: string; data?: string };
+      source?: { type?: string; media_type?: string; url?: string };
     };
     expect(block.type).toBe("audio");
     expect((block as { label?: unknown }).label).toBe("clip.mp3");
-    expect(block.source?.type).toBe("base64");
+    expect(block.source?.type).toBe("url");
     expect(block.source?.media_type).toBe("audio/mpeg");
-    expect(block.source?.data?.includes("data:")).toBe(false);
-    expect(Buffer.from(block.source?.data ?? "", "base64")).toEqual(
-      Buffer.from([0xff, 0xfb, 0x90, 0x00]),
-    );
+    expect(block.source?.url).toBe(audioPath);
   });
 
   it("suppresses reasoning payload audio", async () => {
@@ -274,8 +271,9 @@ describe("buildWebchatAssistantMessageFromReplyPayloads", () => {
             type: "audio",
             label: "voice.mp3",
             source: {
-              type: "base64",
+              type: "url",
               media_type: "audio/mpeg",
+              url: audioPath,
             },
           },
         ],

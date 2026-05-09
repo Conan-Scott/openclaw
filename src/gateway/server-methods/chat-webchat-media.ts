@@ -103,19 +103,15 @@ async function readLocalAudioContentBlockForEmbedding(
     if (opened.stat.size > MAX_WEBCHAT_AUDIO_BYTES) {
       return null;
     }
-    const buf = await opened.handle.readFile();
-    if (buf.length > MAX_WEBCHAT_AUDIO_BYTES) {
-      return null;
-    }
     return {
       path: opened.realPath,
       block: {
         type: "audio",
         label: path.basename(opened.realPath),
         source: {
-          type: "base64",
+          type: "url",
           media_type: mimeTypeForPath(opened.realPath),
-          data: buf.toString("base64"),
+          url: opened.realPath,
         },
       },
     };
