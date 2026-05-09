@@ -27,6 +27,7 @@ import {
   consumePendingAssistantReplyDirectivesIntoReply,
   consumePendingToolMediaIntoReply,
   readPendingToolMediaReply,
+  readSnapshotToolMediaReply,
 } from "./pi-embedded-subscribe.handlers.messages.js";
 import type {
   EmbeddedPiSubscribeContext,
@@ -179,6 +180,9 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     pendingToolMediaUrls: initialPendingToolMediaUrls,
     pendingToolAudioAsVoice: false,
     pendingToolTrustedLocalMedia: false,
+    snapshotToolMediaUrls: [],
+    snapshotToolAudioAsVoice: false,
+    snapshotToolTrustedLocalMedia: false,
     pendingAssistantReplyDirectives: undefined,
     deterministicApprovalPromptPending: false,
     deterministicApprovalPromptSent: false,
@@ -885,6 +889,9 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     state.pendingMessagingMediaUrls.clear();
     state.pendingToolMediaUrls = [];
     state.pendingToolAudioAsVoice = false;
+    state.snapshotToolMediaUrls = [];
+    state.snapshotToolAudioAsVoice = false;
+    state.snapshotToolTrustedLocalMedia = false;
     state.pendingAssistantReplyDirectives = undefined;
     state.deterministicApprovalPromptPending = false;
     state.deterministicApprovalPromptSent = false;
@@ -1001,7 +1008,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     getMessagingToolSentTargets: () => messagingToolSentTargets.slice(),
     getHeartbeatToolResponse: () =>
       state.heartbeatToolResponse ? { ...state.heartbeatToolResponse } : undefined,
-    getPendingToolMediaReply: () => readPendingToolMediaReply(state),
+    getPendingToolMediaReply: () => readSnapshotToolMediaReply(state) ?? readPendingToolMediaReply(state),
     getSuccessfulCronAdds: () => state.successfulCronAdds,
     getReplayState: () => ({ ...state.replayState }),
     // Returns true if any messaging tool successfully sent a message.
