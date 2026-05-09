@@ -1423,6 +1423,8 @@ export async function dispatchReplyFromConfig(
           onBlockReply: (payload: ReplyPayload, context?: BlockReplyContext) => {
             markProgress();
             const run = async () => {
+              // [TTS-TRACE] dispatch-from-config onBlockReply
+              console.warn(`[TTS-TRACE] dispatch onBlockReply: text=${(payload.text ?? "").slice(0, 40)} hasMedia=${resolveSendableOutboundReplyParts(payload).hasMedia} mediaUrls=${JSON.stringify(payload.mediaUrls ?? [])} audioAsVoice=${payload.audioAsVoice} suppressDelivery=${suppressDelivery}`);
               if (
                 payload.isReasoning !== true &&
                 resolveSendableOutboundReplyParts(payload).hasContent

@@ -2379,7 +2379,10 @@ export const chatHandlers: GatewayRequestHandlers = {
         });
       };
       const appendWebchatAgentMediaTranscriptIfNeeded = async (payload: ReplyPayload) => {
+        // [TTS-TRACE] appendWebchatAgentMediaTranscriptIfNeeded entry
+        console.warn(`[TTS-TRACE] appendWebchatAgentMedia: agentRunStarted=${agentRunStarted} appendedAlready=${appendedWebchatAgentMedia} isMediaBearing=${isMediaBearingPayload(payload)} mediaUrls=${JSON.stringify(payload.mediaUrls ?? [])} audioAsVoice=${payload.audioAsVoice} trustedLocalMedia=${payload.trustedLocalMedia}`);
         if (!agentRunStarted || appendedWebchatAgentMedia || !isMediaBearingPayload(payload)) {
+          console.warn(`[TTS-TRACE] appendWebchatAgentMedia: SKIPPED (guard failed)`);
           return;
         }
         const [transcriptPayload] = await normalizeWebchatReplyMediaPathsForDisplay({
@@ -2470,6 +2473,8 @@ export const chatHandlers: GatewayRequestHandlers = {
           context.logGateway.warn(`webchat dispatch failed: ${formatForLog(err)}`);
         },
         deliver: async (payload, info) => {
+          // [TTS-TRACE] webchat deliver callback
+          console.warn(`[TTS-TRACE] webchat deliver: kind=${info.kind} hasMedia=${isMediaBearingPayload(payload)} text=${(payload.text ?? "").slice(0, 40)} mediaUrls=${JSON.stringify(payload.mediaUrls ?? [])} audioAsVoice=${payload.audioAsVoice} trustedLocalMedia=${payload.trustedLocalMedia}`);
           switch (info.kind) {
             case "block":
             case "final":

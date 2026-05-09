@@ -85,7 +85,10 @@ async function readLocalAudioContentBlockForEmbedding(
   raw: string,
   options: WebchatAudioEmbeddingOptions | undefined,
 ): Promise<LocalAudioContentBlock | null> {
+  // [TTS-TRACE] readLocalAudioContentBlockForEmbedding
+  console.warn(`[TTS-TRACE] readLocalAudioEmbed: raw=${raw} trustedLocalMedia=${payload.trustedLocalMedia} audioAsVoice=${payload.audioAsVoice}`);
   if (payload.trustedLocalMedia !== true) {
+    console.warn(`[TTS-TRACE] readLocalAudioEmbed: REJECTED (trustedLocalMedia !== true)`);
     return null;
   }
   const resolved = resolveLocalMediaPathForEmbedding(raw);

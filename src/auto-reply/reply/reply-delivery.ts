@@ -85,8 +85,12 @@ export function createBlockReplyDeliveryHandler(params: {
   directlySentBlockKeys: Set<string>;
 }): (payload: ReplyPayload) => Promise<void> {
   return async (payload) => {
+    // [TTS-TRACE] block reply delivery handler entry
+    const _hasMedia = resolveSendableOutboundReplyParts(payload).hasMedia;
+    console.warn(`[TTS-TRACE] blockReplyDelivery: text=${(payload.text ?? "").slice(0, 40)} hasMedia=${_hasMedia} mediaUrls=${JSON.stringify(payload.mediaUrls ?? [])} audioAsVoice=${payload.audioAsVoice} trustedLocalMedia=${payload.trustedLocalMedia}`);
     const { text, skip } = params.normalizeStreamingText(payload);
-    if (skip && !resolveSendableOutboundReplyParts(payload).hasMedia) {
+    if (skip && !_hasMedia) {
+      console.warn(`[TTS-TRACE] blockReplyDelivery: SKIPPED (normalizeStreamingText skip + no media)`);
       return;
     }
 

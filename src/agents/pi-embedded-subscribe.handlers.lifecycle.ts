@@ -183,6 +183,8 @@ export function handleAgentEnd(ctx: EmbeddedPiSubscribeContext): void | Promise<
   const flushPendingMediaAndChannel = () => {
     if (ctx.params.onBlockReply) {
       const pendingToolMediaReply = consumePendingToolMediaReply(ctx.state);
+      // [TTS-TRACE] flushPendingMediaAndChannel
+      console.warn(`[TTS-TRACE] flushPendingMedia: hasReply=${!!pendingToolMediaReply} mediaUrls=${JSON.stringify(pendingToolMediaReply?.mediaUrls ?? [])} audioAsVoice=${pendingToolMediaReply?.audioAsVoice} visible=${pendingToolMediaReply ? hasAssistantVisibleReply(pendingToolMediaReply) : false}`);
       if (pendingToolMediaReply && hasAssistantVisibleReply(pendingToolMediaReply)) {
         ctx.emitBlockReply(pendingToolMediaReply);
       }

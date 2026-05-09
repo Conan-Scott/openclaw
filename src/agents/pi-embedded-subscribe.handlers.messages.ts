@@ -206,6 +206,8 @@ export function consumePendingToolMediaIntoReply(
   ) {
     return payload;
   }
+  // [TTS-TRACE] consumePendingToolMediaIntoReply — merging media into block reply
+  console.warn(`[TTS-TRACE] consumePendingToolMediaIntoReply: pendingUrls=${JSON.stringify(state.pendingToolMediaUrls)} audioAsVoice=${state.pendingToolAudioAsVoice} trustedLocal=${state.pendingToolTrustedLocalMedia} payloadText=${(payload.text ?? "").slice(0, 40)}`);
   if (hasReplyMedia(payload)) {
     // Pending tool media is a fallback delivery queue; explicit final media is
     // the assistant's user-visible selection, while tool output remains in the transcript.

@@ -395,6 +395,8 @@ function queuePendingToolMedia(
   ctx: ToolHandlerContext,
   mediaReply: { mediaUrls: string[]; audioAsVoice?: boolean; trustedLocalMedia?: boolean },
 ) {
+  // [TTS-TRACE] queuePendingToolMedia
+  console.warn(`[TTS-TRACE] queuePendingToolMedia: mediaUrls=${JSON.stringify(mediaReply.mediaUrls)} audioAsVoice=${mediaReply.audioAsVoice} trustedLocalMedia=${mediaReply.trustedLocalMedia}`);
   const seen = new Set(ctx.state.pendingToolMediaUrls);
   const snapshotSeen = new Set(ctx.state.snapshotToolMediaUrls);
   for (const mediaUrl of mediaReply.mediaUrls) {
