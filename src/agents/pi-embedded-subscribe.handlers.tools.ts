@@ -396,18 +396,24 @@ function queuePendingToolMedia(
   mediaReply: { mediaUrls: string[]; audioAsVoice?: boolean; trustedLocalMedia?: boolean },
 ) {
   const seen = new Set(ctx.state.pendingToolMediaUrls);
+  const snapshotSeen = new Set(ctx.state.snapshotToolMediaUrls);
   for (const mediaUrl of mediaReply.mediaUrls) {
-    if (seen.has(mediaUrl)) {
-      continue;
+    if (!seen.has(mediaUrl)) {
+      seen.add(mediaUrl);
+      ctx.state.pendingToolMediaUrls.push(mediaUrl);
     }
-    seen.add(mediaUrl);
-    ctx.state.pendingToolMediaUrls.push(mediaUrl);
+    if (!snapshotSeen.has(mediaUrl)) {
+      snapshotSeen.add(mediaUrl);
+      ctx.state.snapshotToolMediaUrls.push(mediaUrl);
+    }
   }
   if (mediaReply.audioAsVoice) {
     ctx.state.pendingToolAudioAsVoice = true;
+    ctx.state.snapshotToolAudioAsVoice = true;
   }
   if (mediaReply.trustedLocalMedia) {
     ctx.state.pendingToolTrustedLocalMedia = true;
+    ctx.state.snapshotToolTrustedLocalMedia = true;
   }
 }
 

@@ -253,7 +253,9 @@ function collectToolTelemetry(params: {
     }
   }
   if (!params.isError && params.result) {
-    const media = extractToolResultMediaArtifact(params.result);
+    const media =
+      extractToolResultMediaArtifact(params.result) ??
+      extractToolResultMediaArtifact(params.mediaTrustResult);
     if (media) {
       const mediaUrls = filterToolResultMediaUrls(
         params.toolName,

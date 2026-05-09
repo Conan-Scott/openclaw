@@ -261,6 +261,33 @@ export function readPendingToolMediaReply(
   };
 }
 
+/**
+ * Read the durable snapshot of all tool media ever queued during this turn.
+ * Unlike `readPendingToolMediaReply`, this survives block-reply consumption
+ * so the attempt result can merge tool media into persisted payloads.
+ */
+export function readSnapshotToolMediaReply(
+  state: Pick<
+    EmbeddedPiSubscribeState,
+    "snapshotToolMediaUrls" | "snapshotToolAudioAsVoice" | "snapshotToolTrustedLocalMedia"
+  >,
+): BlockReplyPayload | null {
+  if (
+    state.snapshotToolMediaUrls.length === 0 &&
+    !state.snapshotToolAudioAsVoice &&
+    !state.snapshotToolTrustedLocalMedia
+  ) {
+    return null;
+  }
+  return {
+    mediaUrls: state.snapshotToolMediaUrls.length
+      ? Array.from(new Set(state.snapshotToolMediaUrls))
+      : undefined,
+    audioAsVoice: state.snapshotToolAudioAsVoice || undefined,
+    trustedLocalMedia: state.snapshotToolTrustedLocalMedia || undefined,
+  };
+}
+
 function hasReplyDirectiveMetadata(parsed: ReplyDirectiveParseResult | null | undefined): boolean {
   return Boolean(
     parsed &&

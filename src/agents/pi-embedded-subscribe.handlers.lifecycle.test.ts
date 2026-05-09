@@ -34,6 +34,9 @@ function createContext(
       pendingCompactionRetry: 0,
       pendingToolMediaUrls: [],
       pendingToolAudioAsVoice: false,
+      snapshotToolMediaUrls: [],
+      snapshotToolAudioAsVoice: false,
+      snapshotToolTrustedLocalMedia: false,
       replayState: { replayInvalid: false, hadPotentialSideEffects: false },
       blockState: {
         thinking: true,
