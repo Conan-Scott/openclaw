@@ -115,6 +115,7 @@ export function createCodexDynamicToolBridge(params: {
         const preparedArgs = tool.prepareArguments ? tool.prepareArguments(args) : args;
         const rawResult = await tool.execute(call.callId, preparedArgs, signal);
         const rawIsError = isToolResultError(rawResult);
+        const mediaTrustResult = snapshotToolResultMediaTrust(rawResult);
         const middlewareResult = await middlewareRunner.applyToolResultMiddleware({
           threadId: call.threadId,
           turnId: call.turnId,
@@ -137,7 +138,7 @@ export function createCodexDynamicToolBridge(params: {
           toolName: tool.name,
           args,
           result,
-          mediaTrustResult: rawResult,
+          mediaTrustResult,
           telemetry,
           isError: resultIsError,
         });
@@ -230,6 +231,35 @@ function composeAbortSignals(...signals: Array<AbortSignal | undefined>): AbortS
     return activeSignals[0];
   }
   return AbortSignal.any(activeSignals);
+}
+
+function snapshotToolResultMediaTrust(
+  result: AgentToolResult<unknown> | undefined,
+): AgentToolResult<unknown> | undefined {
+  const details = result?.details && typeof result.details === "object" ? result.details : {};
+  const detailsRecord = details as Record<string, unknown>;
+  const snapshotDetails: Record<string, unknown> = {};
+  const media = extractToolResultMediaArtifact(result);
+  if (media) {
+    snapshotDetails.media = {
+      mediaUrls: media.mediaUrls,
+      ...(media.audioAsVoice ? { audioAsVoice: true } : {}),
+      ...(media.trustedLocalMedia ? { trustedLocalMedia: true } : {}),
+    };
+  }
+  if (typeof detailsRecord.mcpServer === "string") {
+    snapshotDetails.mcpServer = detailsRecord.mcpServer;
+  }
+  if (typeof detailsRecord.mcpTool === "string") {
+    snapshotDetails.mcpTool = detailsRecord.mcpTool;
+  }
+  if (Object.keys(snapshotDetails).length === 0) {
+    return undefined;
+  }
+  return {
+    content: [],
+    details: snapshotDetails,
+  };
 }
 
 function collectToolTelemetry(params: {

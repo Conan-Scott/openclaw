@@ -273,6 +273,51 @@ describe("createCodexDynamicToolBridge", () => {
     expect(bridge.telemetry.toolAudioAsVoice).toBe(true);
   });
 
+  it("preserves tts media telemetry when middleware mutates the raw result", async () => {
+    const registry = createEmptyPluginRegistry();
+    const handler = vi.fn(async (event) => {
+      event.result.details = {};
+      event.result.content = [{ type: "text" as const, text: "(spoken) compacted" }];
+      return undefined;
+    });
+    registry.agentToolResultMiddlewares.push({
+      pluginId: "tokenjuice",
+      pluginName: "Tokenjuice",
+      rawHandler: handler,
+      handler,
+      runtimes: ["codex"],
+      source: "test",
+    });
+    setActivePluginRegistry(registry);
+    const toolResult = {
+      content: [{ type: "text", text: "(spoken) hello" }],
+      details: {
+        media: {
+          mediaUrl: "/tmp/reply.opus",
+          trustedLocalMedia: true,
+          audioAsVoice: true,
+        },
+      },
+    } satisfies AgentToolResult<unknown>;
+    const bridge = createBridgeWithToolResult("tts", toolResult);
+
+    const result = await bridge.handleToolCall({
+      threadId: "thread-1",
+      turnId: "turn-1",
+      callId: "call-1",
+      namespace: null,
+      tool: "tts",
+      arguments: { text: "hello" },
+    });
+
+    expect(result).toEqual({
+      success: true,
+      contentItems: [{ type: "inputText", text: "(spoken) compacted" }],
+    });
+    expect(bridge.telemetry.toolMediaUrls).toEqual(["/tmp/reply.opus"]);
+    expect(bridge.telemetry.toolAudioAsVoice).toBe(true);
+  });
+
   it("records messaging tool side effects while returning concise text to app-server", async () => {
     const toolResult = {
       content: [{ type: "text", text: "Sent." }],
