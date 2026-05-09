@@ -36,6 +36,7 @@ describe("buildWebchatAudioContentBlocksFromReplyPayloads", () => {
       source?: { type?: string; media_type?: string; data?: string };
     };
     expect(block.type).toBe("audio");
+    expect((block as { label?: unknown }).label).toBe("clip.mp3");
     expect(block.source?.type).toBe("base64");
     expect(block.source?.media_type).toBe("audio/mpeg");
     expect(block.source?.data?.includes("data:")).toBe(false);
@@ -247,6 +248,41 @@ describe("buildWebchatAssistantMessageFromReplyPayloads", () => {
         { type: "input_image", image_url: "data:image/png;base64,cG5n" },
       ],
     });
+  });
+
+  it("keeps synthetic audio text out of display content while retaining transcript text", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-webchat-audio-"));
+    const audioPath = path.join(tmpDir, "voice.mp3");
+    fs.writeFileSync(audioPath, Buffer.from([0xff, 0xfb, 0x90, 0x00]));
+
+    try {
+      const message = await buildWebchatAssistantMessageFromReplyPayloads(
+        [
+          {
+            text: "NO_REPLY",
+            mediaUrl: audioPath,
+            trustedLocalMedia: true,
+          },
+        ],
+        { localRoots: [tmpDir] },
+      );
+
+      expect(message).toMatchObject({
+        transcriptText: "Audio reply",
+        content: [
+          {
+            type: "audio",
+            label: "voice.mp3",
+            source: {
+              type: "base64",
+              media_type: "audio/mpeg",
+            },
+          },
+        ],
+      });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it("preserves reply directives in transcript text for media replies", async () => {

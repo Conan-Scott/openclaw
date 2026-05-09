@@ -672,9 +672,9 @@ describe("chat directive tag stripping for non-streaming final payloads", () => 
           role: "assistant",
           idempotencyKey: "idem-agent-audio:assistant-media",
           content: [
-            { type: "text", text: "Audio reply" },
             {
               type: "audio",
+              label: "reply.mp3",
               source: {
                 type: "base64",
                 media_type: "audio/mpeg",
@@ -734,9 +734,9 @@ describe("chat directive tag stripping for non-streaming final payloads", () => 
         role: "assistant",
         idempotencyKey: "idem-agent-tts:assistant-media",
         content: [
-          { type: "text", text: "Audio reply" },
           {
             type: "audio",
+            label: "tts.mp3",
             source: {
               type: "base64",
               media_type: "audio/mpeg",

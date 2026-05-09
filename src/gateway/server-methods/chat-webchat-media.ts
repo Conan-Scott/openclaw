@@ -111,6 +111,7 @@ async function readLocalAudioContentBlockForEmbedding(
       path: opened.realPath,
       block: {
         type: "audio",
+        label: path.basename(opened.realPath),
         source: {
           type: "base64",
           media_type: mimeTypeForPath(opened.realPath),
@@ -263,14 +264,21 @@ export async function buildWebchatAssistantMessageFromReplyPayloads(
           ? "Audio reply"
           : "Image reply"
       : undefined;
-    const blockText = text ?? syntheticText;
+    const transcriptBlockText = text ?? syntheticText;
+    const blockText = text ?? (payloadHasAudio ? undefined : syntheticText);
     if (blockText) {
       const fullText = replyDirectivePrefix ? `${replyDirectivePrefix}${blockText}` : blockText;
-      transcriptTextParts.push(fullText);
       content.push({ type: "text", text: fullText });
+    } else if (replyDirectivePrefix && !payloadHasAudio) {
+      content.push({ type: "text", text: replyDirectivePrefix });
+    }
+    if (transcriptBlockText) {
+      const fullText = replyDirectivePrefix
+        ? `${replyDirectivePrefix}${transcriptBlockText}`
+        : transcriptBlockText;
+      transcriptTextParts.push(fullText);
     } else if (replyDirectivePrefix) {
       transcriptTextParts.push(replyDirectivePrefix);
-      content.push({ type: "text", text: replyDirectivePrefix });
     }
     content.push(...payloadMediaBlocks);
   }
