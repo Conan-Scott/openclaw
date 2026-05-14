@@ -13,6 +13,7 @@ import { stripEnvelopeFromMessages } from "./chat-sanitize.js";
 import { isSuppressedControlReplyText } from "./control-reply-text.js";
 
 export const DEFAULT_CHAT_HISTORY_TEXT_MAX_CHARS = 8_000;
+const MAX_INLINE_AUDIO_HISTORY_BASE64_CHARS = 96 * 1024;
 
 type RoleContentMessage = {
   role: string;
@@ -62,7 +63,11 @@ export function isToolHistoryBlockType(type: unknown): boolean {
 
 function sanitizeChatHistoryContentBlock(
   block: unknown,
-  opts?: { preserveExactToolPayload?: boolean; maxChars?: number },
+  opts?: {
+    preserveExactToolPayload?: boolean;
+    maxChars?: number;
+    inlineAudioBudget?: { remainingBase64Chars: number };
+  },
 ): { block: unknown; changed: boolean } {
   if (!block || typeof block !== "object") {
     return { block, changed: false };
@@ -125,11 +130,20 @@ function sanitizeChatHistoryContentBlock(
     const source = { ...(entry.source as Record<string, unknown>) };
     if (source.type === "base64" && typeof source.data === "string") {
       const bytes = Buffer.byteLength(source.data, "utf8");
-      delete source.data;
-      source.omitted = true;
-      source.bytes = bytes;
-      entry.source = source;
-      changed = true;
+      const inlineAudioBudget = opts?.inlineAudioBudget;
+      const shouldRedactInlineAudio = inlineAudioBudget === undefined;
+      const exceedsBlockBudget = bytes > MAX_INLINE_AUDIO_HISTORY_BASE64_CHARS;
+      const exceedsMessageBudget =
+        inlineAudioBudget !== undefined && bytes > inlineAudioBudget.remainingBase64Chars;
+      if (shouldRedactInlineAudio || exceedsBlockBudget || exceedsMessageBudget) {
+        delete source.data;
+        source.omitted = true;
+        source.bytes = bytes;
+        entry.source = source;
+        changed = true;
+      } else if (inlineAudioBudget) {
+        inlineAudioBudget.remainingBase64Chars -= bytes;
+      }
     }
   }
   return { block: changed ? entry : block, changed };
@@ -314,8 +328,16 @@ function sanitizeChatHistoryMessage(
       changed ||= stripped.changed || res.truncated;
     }
   } else if (Array.isArray(entry.content)) {
+    const inlineAudioBudget =
+      entry.role === "assistant"
+        ? { remainingBase64Chars: MAX_INLINE_AUDIO_HISTORY_BASE64_CHARS }
+        : undefined;
     const updated = entry.content.map((block) =>
-      sanitizeChatHistoryContentBlock(block, { preserveExactToolPayload, maxChars }),
+      sanitizeChatHistoryContentBlock(block, {
+        preserveExactToolPayload,
+        maxChars,
+        inlineAudioBudget,
+      }),
     );
     if (updated.some((item) => item.changed)) {
       entry.content = updated.map((item) => item.block);

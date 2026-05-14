@@ -420,7 +420,7 @@ describe("injectTimestamp", () => {
 });
 
 describe("sanitizeChatHistoryMessages", () => {
-  it("redacts base64 audio content blocks from chat history", () => {
+  it("preserves small base64 audio content blocks for chat history playback", () => {
     const data = Buffer.from("voice-bytes").toString("base64");
     const result = sanitizeChatHistoryMessages([
       {
@@ -445,6 +445,142 @@ describe("sanitizeChatHistoryMessages", () => {
         role: "assistant",
         content: [
           { type: "text", text: "Audio reply" },
+          {
+            type: "audio",
+            source: {
+              type: "base64",
+              media_type: "audio/mp3",
+              data,
+            },
+          },
+        ],
+        timestamp: 1,
+      },
+    ]);
+  });
+
+  it("redacts oversized base64 audio content blocks without dropping visible text", () => {
+    const data = "A".repeat(100 * 1024);
+    const result = sanitizeChatHistoryMessages([
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Audio reply" },
+          {
+            type: "audio",
+            source: {
+              type: "base64",
+              media_type: "audio/mp3",
+              data,
+            },
+          },
+        ],
+        timestamp: 1,
+      },
+    ]);
+
+    expect(result).toEqual([
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Audio reply" },
+          {
+            type: "audio",
+            source: {
+              type: "base64",
+              media_type: "audio/mp3",
+              omitted: true,
+              bytes: Buffer.byteLength(data, "utf8"),
+            },
+          },
+        ],
+        timestamp: 1,
+      },
+    ]);
+  });
+
+  it("redacts additional inline audio blocks before they exceed the per-message history cap", () => {
+    const firstData = "A".repeat(80 * 1024);
+    const secondData = "B".repeat(80 * 1024);
+    const result = sanitizeChatHistoryMessages([
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Audio reply" },
+          {
+            type: "audio",
+            source: {
+              type: "base64",
+              media_type: "audio/mp3",
+              data: firstData,
+            },
+          },
+          {
+            type: "audio",
+            source: {
+              type: "base64",
+              media_type: "audio/mp3",
+              data: secondData,
+            },
+          },
+        ],
+        timestamp: 1,
+      },
+    ]);
+
+    expect(result).toEqual([
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Audio reply" },
+          {
+            type: "audio",
+            source: {
+              type: "base64",
+              media_type: "audio/mp3",
+              data: firstData,
+            },
+          },
+          {
+            type: "audio",
+            source: {
+              type: "base64",
+              media_type: "audio/mp3",
+              omitted: true,
+              bytes: Buffer.byteLength(secondData, "utf8"),
+            },
+          },
+        ],
+        timestamp: 1,
+      },
+    ]);
+  });
+
+  it("redacts non-assistant base64 audio content blocks", () => {
+    const data = Buffer.from("user-audio-bytes").toString("base64");
+    const result = sanitizeChatHistoryMessages([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Audio upload" },
+          {
+            type: "audio",
+            source: {
+              type: "base64",
+              media_type: "audio/mp3",
+              data,
+            },
+          },
+        ],
+        timestamp: 1,
+      },
+    ]);
+
+    expect(result).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Audio upload" },
           {
             type: "audio",
             source: {
@@ -546,6 +682,42 @@ describe("projectRecentChatDisplayMessages", () => {
       timestamp: 2,
       __openclaw: { seq: 2 },
     });
+  });
+
+  it("keeps assistant base64 audio blocks for webchat playback", () => {
+    const result = projectRecentChatDisplayMessages([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "audio",
+            source: {
+              type: "base64",
+              media_type: "audio/mpeg",
+              data: "//uQAA==",
+            },
+          },
+        ],
+        timestamp: 1,
+      },
+    ]);
+
+    expect(result).toEqual([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "audio",
+            source: {
+              type: "base64",
+              media_type: "audio/mpeg",
+              data: "//uQAA==",
+            },
+          },
+        ],
+        timestamp: 1,
+      },
+    ]);
   });
 
   it("keeps pure commentary assistant messages hidden", () => {
