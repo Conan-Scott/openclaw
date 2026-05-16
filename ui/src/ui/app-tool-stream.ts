@@ -520,6 +520,10 @@ export function handleAgentEvent(host: ToolStreamHost, payload?: AgentEventPaylo
 
   // Handle compaction events
   if (payload.stream === "compaction") {
+    const accepted = resolveAcceptedSession(host, payload, { allowSessionScopedWhenIdle: true });
+    if (!accepted.accepted) {
+      return;
+    }
     handleCompactionEvent(host as CompactionHost, payload);
     return;
   }
