@@ -346,7 +346,8 @@ struct MenuContent: View {
         guard case .connected = self.controlChannel.state else { return nil }
 
         if let problem = self.macNodeProblemStore.problem {
-            return (problem.title, problem.canTrustRotatedCertificate ? .orange : .red)
+            let label = self.macNodeProblemStore.statusMessage?.nonEmpty ?? problem.title
+            return (label, problem.canTrustRotatedCertificate ? .orange : .red)
         }
 
         let deviceId = DeviceIdentityStore.loadOrCreate().deviceId
