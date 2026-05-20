@@ -159,4 +159,22 @@ struct MacNodeModeCoordinatorTests {
         #expect(MacNodeConnectionProblemStore.shared.statusMessage == "Gateway certificate changed")
         MacNodeConnectionProblemStore.shared.clear()
     }
+
+    @Test @MainActor func `mac node problem store does not offer trust for untrusted certificate`() {
+        MacNodeConnectionProblemStore.shared.clear()
+        let failure = GatewayTLSValidationFailure(
+            kind: .pinMismatch,
+            host: "gateway.example.com",
+            storeKey: "gateway.example.com:443",
+            expectedFingerprint: "old",
+            observedFingerprint: "new",
+            systemTrustOk: false)
+        let error = GatewayTLSValidationError(failure: failure, context: "connect to gateway")
+
+        MacNodeConnectionProblemStore.shared.record(error: error)
+
+        #expect(MacNodeConnectionProblemStore.shared.problem?.kind == .tlsPinMismatch)
+        #expect(MacNodeConnectionProblemStore.shared.problem?.canTrustRotatedCertificate == false)
+        MacNodeConnectionProblemStore.shared.clear()
+    }
 }

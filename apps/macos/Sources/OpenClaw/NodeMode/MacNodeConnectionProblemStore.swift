@@ -50,6 +50,7 @@ final class MacNodeConnectionProblemStore {
                 "new=\(fingerprint, privacy: .public)")
         self.problem = nil
         self.statusMessage = "Gateway certificate updated. Reconnecting..."
+        // Rebuild the node loop so the next websocket uses fresh TLS pinning params.
         await MacNodeModeCoordinator.shared.reconnect()
         return true
     }
