@@ -140,4 +140,23 @@ struct MacNodeModeCoordinatorTests {
 
         #expect(!MacNodeModeCoordinator.shouldAutoRepairStaleTLSPin(url: url, failure: failure))
     }
+
+    @Test @MainActor func `mac node problem store records trusted public certificate rotation`() {
+        MacNodeConnectionProblemStore.shared.clear()
+        let failure = GatewayTLSValidationFailure(
+            kind: .pinMismatch,
+            host: "gateway.example.com",
+            storeKey: "gateway.example.com:443",
+            expectedFingerprint: "old",
+            observedFingerprint: "new",
+            systemTrustOk: true)
+        let error = GatewayTLSValidationError(failure: failure, context: "connect to gateway")
+
+        MacNodeConnectionProblemStore.shared.record(error: error)
+
+        #expect(MacNodeConnectionProblemStore.shared.problem?.kind == .tlsPinMismatch)
+        #expect(MacNodeConnectionProblemStore.shared.problem?.canTrustRotatedCertificate == true)
+        #expect(MacNodeConnectionProblemStore.shared.statusMessage == "Gateway certificate changed")
+        MacNodeConnectionProblemStore.shared.clear()
+    }
 }

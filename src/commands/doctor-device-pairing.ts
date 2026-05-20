@@ -350,6 +350,16 @@ function collectPairedRecordIssues(snapshot: DoctorPairingSnapshot): string[] {
     });
     const approvedRoles = listApprovedPairedDeviceRoles(device);
     const approvedScopes = resolveApprovedScopes(device);
+    if (
+      device.clientId === "openclaw-macos" &&
+      device.clientMode !== "node" &&
+      approvedRoles.includes("operator") &&
+      !approvedRoles.includes("node")
+    ) {
+      lines.push(
+        `- Native macOS app ${deviceLabel} is paired only as an operator/UI client, so Mac capabilities cannot register as a node. If the Dashboard works but Mac capabilities are offline, check the Mac app for a stale local Gateway TLS pin; use the app's Trust Gateway Certificate action when offered, set gateway.remote.tlsFingerprint locally on that Mac, or re-pair the native app after reviewing the certificate.`,
+      );
+    }
     if (approvedRoles.includes("operator") && approvedScopes.length === 0) {
       lines.push(
         `- Paired device ${deviceLabel} is missing its approved operator scope baseline. Scope upgrades can get stuck in pairing-required until the device repairs or is re-approved.`,

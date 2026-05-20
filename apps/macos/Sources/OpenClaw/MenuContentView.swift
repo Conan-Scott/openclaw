@@ -16,6 +16,7 @@ struct MenuContent: View {
     private let controlChannel = ControlChannel.shared
     private let activityStore = WorkActivityStore.shared
     private let nodesStore = NodesStore.shared
+    @Bindable private var macNodeProblemStore = MacNodeConnectionProblemStore.shared
     @Bindable private var pairingPrompter = NodePairingApprovalPrompter.shared
     @Bindable private var devicePairingPrompter = DevicePairingApprovalPrompter.shared
     @Environment(\.openSettings) private var openSettings
@@ -66,6 +67,22 @@ struct MenuContent: View {
                 }
             }
             .disabled(self.state.connectionMode == .unconfigured)
+
+            if let problem = self.macNodeProblemStore.problem {
+                if problem.canTrustRotatedCertificate {
+                    Button {
+                        Task { _ = await self.macNodeProblemStore.trustRotatedGatewayCertificate() }
+                    } label: {
+                        Label("Trust Gateway Certificate", systemImage: "checkmark.seal")
+                    }
+                } else {
+                    Button {
+                        self.open(tab: .general)
+                    } label: {
+                        Label("Review Gateway Connection", systemImage: "exclamationmark.triangle")
+                    }
+                }
+            }
 
             Divider()
             Toggle(isOn: self.heartbeatsBinding) {
@@ -327,6 +344,10 @@ struct MenuContent: View {
     private var macNodeStatus: (label: String, color: Color)? {
         guard self.state.connectionMode != .unconfigured else { return nil }
         guard case .connected = self.controlChannel.state else { return nil }
+
+        if let problem = self.macNodeProblemStore.problem {
+            return (problem.title, problem.canTrustRotatedCertificate ? .orange : .red)
+        }
 
         let deviceId = DeviceIdentityStore.loadOrCreate().deviceId
         if let entry = self.nodesStore.nodes.first(where: { $0.nodeId == deviceId }) {

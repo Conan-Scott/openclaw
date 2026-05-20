@@ -38,6 +38,13 @@ final class MacNodeModeCoordinator {
         Task { await self.session.disconnect() }
     }
 
+    func reconnect() async {
+        self.task?.cancel()
+        self.task = nil
+        await self.session.disconnect()
+        self.start()
+    }
+
     private func run() async {
         var retryDelay: UInt64 = 1_000_000_000
         var lastCameraEnabled: Bool?
@@ -97,6 +104,9 @@ final class MacNodeModeCoordinator {
                     onConnected: { [weak self] in
                         guard let self else { return }
                         self.logger.info("mac node connected to gateway")
+                        await MainActor.run {
+                            MacNodeConnectionProblemStore.shared.clear()
+                        }
                         let mainSessionKey = await GatewayConnection.shared.mainSessionKey()
                         await self.runtime.updateMainSessionKey(mainSessionKey)
                         await self.runtime.setEventSender { [weak self] event, payload in
@@ -126,6 +136,7 @@ final class MacNodeModeCoordinator {
                     retryDelay = 1_000_000_000
                     continue
                 }
+                MacNodeConnectionProblemStore.shared.record(error: error)
                 self.logger.error("mac node gateway connect failed: \(error.localizedDescription, privacy: .public)")
                 try? await Task.sleep(nanoseconds: min(retryDelay, 10_000_000_000))
                 retryDelay = min(retryDelay * 2, 10_000_000_000)

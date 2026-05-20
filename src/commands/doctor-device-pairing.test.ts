@@ -258,6 +258,43 @@ describe("noteDevicePairingHealth", () => {
     expect(requireNoteMessage()).toContain("req-gateway-1");
   });
 
+  it("warns when a native macOS app is paired only as an operator", async () => {
+    callGatewayMock.mockResolvedValue({
+      pending: [],
+      paired: [
+        {
+          deviceId: "mac-native-1",
+          publicKey: "pubkey",
+          platform: "macOS 26.4.1",
+          clientId: "openclaw-macos",
+          clientMode: "ui",
+          displayName: "Mac App",
+          role: "operator",
+          roles: ["operator"],
+          scopes: ["operator.read"],
+          tokens: [
+            {
+              role: "operator",
+              scopes: ["operator.read"],
+              createdAtMs: 1,
+            },
+          ],
+        },
+      ],
+    });
+
+    await noteDevicePairingHealth({
+      cfg: { gateway: { mode: "remote" } },
+      healthOk: true,
+    });
+
+    expect(noteMock).toHaveBeenCalledTimes(1);
+    const message = requireNoteMessage();
+    expect(message).toContain("Native macOS app Mac App");
+    expect(message).toContain("paired only as an operator/UI client");
+    expect(message).toContain("stale local Gateway TLS pin");
+  });
+
   it("sanitizes device labels before printing doctor notes", async () => {
     callGatewayMock.mockResolvedValue({
       pending: [
