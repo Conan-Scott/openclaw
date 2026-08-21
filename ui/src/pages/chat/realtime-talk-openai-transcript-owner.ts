@@ -85,8 +85,8 @@ export class OpenAiRealtimeTranscriptOwner {
   }
 
   assistant(rawText: unknown, rawItemId: unknown): TranscriptAction[] {
-    const itemId = this.requireItemId(rawItemId);
-    if (this.settledIds.has(itemId) || this.pendingAssistantIds.has(itemId)) {
+    const itemId = this.optionalItemId(rawItemId);
+    if (itemId && (this.settledIds.has(itemId) || this.pendingAssistantIds.has(itemId))) {
       return [];
     }
     const text = typeof rawText === "string" ? rawText.trim() : "";
@@ -100,7 +100,9 @@ export class OpenAiRealtimeTranscriptOwner {
     }
     this.retainedBytes += bytes;
     const entry: AssistantEntry = { kind: "assistant", text, itemId };
-    this.pendingAssistantIds.add(itemId);
+    if (itemId) {
+      this.pendingAssistantIds.add(itemId);
+    }
     if (this.earlyCompletions.size > 0) {
       this.deferredAssistants.push(entry);
       return [];
@@ -180,6 +182,23 @@ export class OpenAiRealtimeTranscriptOwner {
     const itemId = typeof value === "string" ? value.trim() : "";
     if (!itemId) {
       throw new Error("Realtime transcription item identity was missing");
+    }
+    if (encoder.encode(itemId).byteLength > MAX_ITEM_ID_BYTES) {
+      throw new Error("Realtime transcription exceeded the item identity limit");
+    }
+    return itemId;
+  }
+
+  private optionalItemId(value: unknown): string | undefined {
+    if (value === undefined || value === null) {
+      return undefined;
+    }
+    if (typeof value !== "string") {
+      throw new Error("Realtime transcription item identity was invalid");
+    }
+    const itemId = value.trim();
+    if (!itemId) {
+      return undefined;
     }
     if (encoder.encode(itemId).byteLength > MAX_ITEM_ID_BYTES) {
       throw new Error("Realtime transcription exceeded the item identity limit");

@@ -44,6 +44,7 @@ describe("OpenAiRealtimeTranscriptOwner", () => {
   it("rejects missing item identity and explicit provider failure", () => {
     const owner = new OpenAiRealtimeTranscriptOwner();
     expect(() => owner.commit("")).toThrow("identity was missing");
+    expect(() => owner.assistant("answer", 42)).toThrow("identity was invalid");
     owner.commit("a");
     expect(() => owner.fail("a", "provider rejected transcription")).toThrow(
       "provider rejected transcription",
@@ -71,6 +72,26 @@ describe("OpenAiRealtimeTranscriptOwner", () => {
       { role: "assistant", text: "answer", itemId: "assistant-a" },
     ]);
     expect(owner.assistant("duplicate", "assistant-a")).toEqual([]);
+  });
+
+  it("delivers each unkeyed assistant final", () => {
+    const owner = new OpenAiRealtimeTranscriptOwner();
+    expect(owner.assistant("first", undefined)).toEqual([
+      { role: "assistant", text: "first", itemId: undefined },
+    ]);
+    expect(owner.assistant("second", "  ")).toEqual([
+      { role: "assistant", text: "second", itemId: undefined },
+    ]);
+  });
+
+  it("holds an unkeyed assistant final behind an unresolved user commit", () => {
+    const owner = new OpenAiRealtimeTranscriptOwner();
+    owner.commit("user-a");
+    expect(owner.assistant("answer", undefined)).toEqual([]);
+    expect(owner.complete("user-a", "question")).toEqual([
+      { role: "user", text: "question", itemId: "user-a" },
+      { role: "assistant", text: "answer", itemId: undefined },
+    ]);
   });
 
   it("detects unresolved user items at close", () => {

@@ -747,6 +747,42 @@ describe("WebRtcSdpRealtimeTalkTransport", () => {
     transport.stop();
   });
 
+  it("delivers an unkeyed assistant final behind its unresolved user commit", async () => {
+    stubAnswerSdpFetch();
+    const onStatus = vi.fn();
+    const onTalkEvent = vi.fn();
+    const onTranscript = vi.fn();
+    const transport = createOpenAiTransport({}, { onStatus, onTalkEvent, onTranscript });
+    await startAndActivate(transport);
+    const peer = FakePeerConnection.instances[0];
+    dispatchCommitted(peer, "input-a");
+    dispatchRealtimeEvent(peer, {
+      type: "response.output_text.done",
+      text: "answer without provider identity",
+    });
+    expect(onTranscript).not.toHaveBeenCalled();
+
+    dispatchRealtimeEvent(peer, {
+      type: "conversation.item.input_audio_transcription.completed",
+      item_id: "input-a",
+      transcript: "question",
+    });
+
+    expect(onTranscript.mock.calls.map(([entry]) => `${entry.role}:${entry.text}`)).toEqual([
+      "user:question",
+      "assistant:answer without provider identity",
+    ]);
+    expect(onTalkEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "output.text.done",
+        itemId: undefined,
+        payload: { text: "answer without provider identity" },
+      }),
+    );
+    expect(onStatus).not.toHaveBeenCalledWith("error", expect.anything());
+    transport.stop();
+  });
+
   it("deduplicates terminal user transcript events by provider item id", async () => {
     stubAnswerSdpFetch();
     const onTranscript = vi.fn();
