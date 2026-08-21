@@ -258,12 +258,18 @@ export type RealtimeVoiceBrowserAudioContract = {
   outputSampleRateHz: number;
 };
 
+type RealtimeVoiceBrowserTranscriptProtocol = "openai-ga-items" | "openai-frameless-turns";
+
 type RealtimeVoiceBrowserWebRtcSdpSession = {
   provider: RealtimeVoiceProviderId;
   transport: "webrtc";
   clientSecret: string;
   offerUrl?: string;
   offerHeaders?: Record<string, string>;
+  /** Provider event contract used to prove transcript readiness and order final turns. */
+  transcriptProtocol?: RealtimeVoiceBrowserTranscriptProtocol;
+  /** Effective provider VAD silence window used to bound final-transcript drain. */
+  transcriptSilenceDurationMs?: number;
   model?: string;
   voice?: string;
   expiresAt?: number;

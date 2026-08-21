@@ -126,10 +126,12 @@ function buildOpenAIRealtimeBrowserSessionConfig(
   model: string,
 ): {
   session: Record<string, unknown> & { model: string };
+  transcriptSilenceDurationMs: number;
   voice: OpenAIRealtimeVoice;
 } {
   const voice = normalizeOpenAIRealtimeVoice(req.voice) ?? config.voice ?? "alloy";
   const tools = normalizeOpenAIRealtimeTools(req.tools);
+  const transcriptSilenceDurationMs = req.silenceDurationMs ?? config.silenceDurationMs ?? 500;
   const session: Record<string, unknown> & { model: string } = {
     type: "realtime",
     model,
@@ -164,7 +166,7 @@ function buildOpenAIRealtimeBrowserSessionConfig(
   if (reasoningEffort) {
     session.reasoning = { effort: reasoningEffort };
   }
-  return { session, voice };
+  return { session, transcriptSilenceDurationMs, voice };
 }
 
 async function createOpenAIRealtimeBrowserSession(
@@ -271,7 +273,11 @@ async function createOpenAIRealtimeBrowserSession(
     });
     return await quicksilverBroker.createBrowserSession(quicksilverRequest, auth);
   }
-  const { session, voice } = buildOpenAIRealtimeBrowserSessionConfig(req, config, model);
+  const { session, transcriptSilenceDurationMs, voice } = buildOpenAIRealtimeBrowserSessionConfig(
+    req,
+    config,
+    model,
+  );
   const auth = await resolveOpenAIRealtimePlatformAuth({
     configuredApiKey: config.apiKey,
     cfg: req.cfg,
@@ -301,6 +307,7 @@ async function createOpenAIRealtimeBrowserSession(
       {
         ...req,
         model,
+        gaTranscriptSilenceDurationMs: transcriptSilenceDurationMs,
         voice,
         gaSession: session,
       },
@@ -320,6 +327,8 @@ async function createOpenAIRealtimeBrowserSession(
     transport: "webrtc",
     clientSecret: clientSecret.value,
     offerUrl: "https://api.openai.com/v1/realtime/calls",
+    transcriptProtocol: "openai-ga-items",
+    transcriptSilenceDurationMs,
     ...(offerHeaders ? { offerHeaders } : {}),
     model,
     voice,

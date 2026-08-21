@@ -111,13 +111,119 @@ export function retireUncommittedRealtimeTalkTransport(params: {
   params.closeVoiceSession();
 }
 
-export function transcriptPersistenceAbortError(): Error {
+function transcriptPersistenceAbortError(): Error {
   const error = new Error("voice transcript persistence aborted");
   error.name = "AbortError";
   return error;
 }
 
-export async function waitForTranscriptRetry(delayMs: number, signal: AbortSignal): Promise<void> {
+function transcriptWriteError(error: unknown, fallback: string): Error {
+  return error instanceof Error ? error : new Error(fallback, { cause: error });
+}
+
+export async function writeRealtimeTalkTranscriptWithRetry(params: {
+  client: GatewayBrowserClient;
+  sessionKey: string;
+  voiceSessionId: string;
+  entryId: string;
+  role: "user" | "assistant";
+  text: string;
+  signal: AbortSignal;
+}): Promise<void> {
+  const retryDelaysMs = [0, 500, 2_000];
+  let lastError: unknown;
+  for (const delayMs of retryDelaysMs) {
+    if (delayMs > 0) {
+      await waitForTranscriptRetry(delayMs, params.signal);
+    } else if (params.signal.aborted) {
+      throw transcriptPersistenceAbortError();
+    }
+    try {
+      await params.client.request(
+        "talk.client.transcript",
+        {
+          sessionKey: params.sessionKey,
+          voiceSessionId: params.voiceSessionId,
+          entryId: params.entryId,
+          role: params.role,
+          text: params.text,
+          timestamp: Date.now(),
+        },
+        {
+          signal: params.signal,
+          timeoutMs: DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS,
+        },
+      );
+      return;
+    } catch (error) {
+      if (params.signal.aborted) {
+        throw transcriptPersistenceAbortError();
+      }
+      lastError = error;
+    }
+  }
+  throw transcriptWriteError(lastError, "voice transcript save failed");
+}
+
+export function closeRealtimeTalkVoiceSession(params: {
+  client: GatewayBrowserClient;
+  sessionKey: string;
+  detached: DetachedVoiceSession;
+  isCurrentGeneration: () => boolean;
+  onStatus?: (status: "error", detail: string) => void;
+}): void {
+  const { detached } = params;
+  if (detached.serverOwned) {
+    detached.owner?.release();
+    return;
+  }
+  const owner = detached.owner!;
+  owner.beginDrain();
+  void detached.transcriptQueue
+    .flush()
+    .then(async () => {
+      let lastError: unknown;
+      for (const delayMs of [0, 500, 2_000]) {
+        if (delayMs > 0) {
+          await waitForTranscriptRetry(delayMs, owner.closeSignal);
+        } else if (owner.closeSignal.aborted) {
+          throw transcriptPersistenceAbortError();
+        }
+        try {
+          await params.client.request(
+            "talk.client.close",
+            {
+              sessionKey: params.sessionKey,
+              voiceSessionId: detached.voiceSessionId,
+            },
+            {
+              signal: owner.closeSignal,
+              timeoutMs: DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS,
+            },
+          );
+          return;
+        } catch (error) {
+          if (owner.closeSignal.aborted) {
+            throw transcriptPersistenceAbortError();
+          }
+          lastError = error;
+        }
+      }
+      throw transcriptWriteError(lastError, "Realtime Talk voice session close failed");
+    })
+    .catch((error: unknown) => {
+      if (owner.closeSignal.aborted) {
+        return;
+      }
+      console.warn("Realtime Talk voice session close failed", error);
+      if (params.isCurrentGeneration()) {
+        params.onStatus?.("error", "Realtime Talk voice session close failed");
+      }
+    })
+    .finally(owner.release);
+}
+
+async function waitForTranscriptRetry(delayMs: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) {
     throw transcriptPersistenceAbortError();
   }

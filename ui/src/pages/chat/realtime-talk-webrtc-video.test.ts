@@ -37,7 +37,9 @@ class FakePeerConnection extends EventTarget {
     this.localDescription = description;
   }
 
-  async setRemoteDescription(): Promise<void> {}
+  async setRemoteDescription(): Promise<void> {
+    this.channel.dispatchEvent(new Event("open"));
+  }
 
   close(): void {
     this.connectionState = "closed";
@@ -151,6 +153,7 @@ describe("OpenAI Realtime Video Talk", () => {
     );
 
     await transport.start();
+    transport.activate();
     const peer = FakePeerConnection.instance;
     expect(getUserMedia).toHaveBeenCalledOnce();
     expect(peer?.addTrack).toHaveBeenCalledWith(audioTrack, audio);

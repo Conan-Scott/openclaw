@@ -307,6 +307,8 @@ describe("OpenAI realtime voice browser authentication", () => {
       transport: "webrtc",
       clientSecret: "client-secret-123",
       offerUrl: "https://api.openai.com/v1/realtime/calls",
+      transcriptProtocol: "openai-ga-items",
+      transcriptSilenceDurationMs: 500,
       model: "gpt-realtime-2.1",
       expiresAt: 1_765_000_000_000,
     });

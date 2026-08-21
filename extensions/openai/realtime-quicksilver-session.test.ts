@@ -167,6 +167,8 @@ describe("GPT-Live offer broker", () => {
       if (reservation.transport !== "webrtc") {
         throw new Error("Expected WebRTC reservation");
       }
+      expect(reservation.transcriptProtocol).toBe("openai-ga-items");
+      expect(reservation.transcriptSilenceDurationMs).toBe(500);
       expect(reservation).not.toHaveProperty("model");
       expect(reservation).not.toHaveProperty("voice");
       const response = createResponseHarness();
@@ -744,6 +746,7 @@ describe("GPT-Live offer broker", () => {
       );
       expect(reservation).toMatchObject({
         offerUrl: OPENAI_QUICKSILVER_OFFER_PATH,
+        transcriptProtocol: "openai-frameless-turns",
         model: "gpt-live-1",
         voice: "marin",
         expiresAt: expect.any(Number),

@@ -8,6 +8,8 @@ const transportMock = vi.hoisted(() => ({
   relayStops: [] as Array<ReturnType<typeof vi.fn>>,
   webRtcContexts: [] as RealtimeTalkTransportContext[],
   webRtcStops: [] as Array<ReturnType<typeof vi.fn>>,
+  webRtcDrains: [] as Array<ReturnType<typeof vi.fn>>,
+  nextWebRtcDrain: undefined as (() => Promise<void>) | undefined,
   relayActivate: vi.fn(),
   start: vi.fn(async (): Promise<"ready" | "cancelled"> => "ready"),
   stop: vi.fn(),
@@ -39,7 +41,13 @@ vi.mock("./realtime-talk-webrtc.ts", () => ({
     transportMock.webRtcContexts.push(context);
     const stop = vi.fn((options?: { emitClosed?: boolean }) => transportMock.stop(options));
     transportMock.webRtcStops.push(stop);
-    return { start: transportMock.start, stop };
+    const drainImpl = transportMock.nextWebRtcDrain;
+    transportMock.nextWebRtcDrain = undefined;
+    const drain = drainImpl ? vi.fn(drainImpl) : undefined;
+    if (drain) {
+      transportMock.webRtcDrains.push(drain);
+    }
+    return { start: transportMock.start, stop, ...(drain ? { drain } : {}) };
   }),
 }));
 
@@ -68,6 +76,8 @@ describe("RealtimeTalkSession lifecycle", () => {
     transportMock.relayStops.length = 0;
     transportMock.webRtcContexts.length = 0;
     transportMock.webRtcStops.length = 0;
+    transportMock.webRtcDrains.length = 0;
+    transportMock.nextWebRtcDrain = undefined;
     transportMock.relayActivate.mockClear();
     transportMock.start.mockClear();
     transportMock.stop.mockClear();
@@ -110,6 +120,128 @@ describe("RealtimeTalkSession lifecycle", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("keeps transcript ownership until the active transport drains on stop", async () => {
+    const drain = createDeferred();
+    transportMock.nextWebRtcDrain = () => drain.promise;
+    const transcriptEntryIds: string[] = [];
+    const request = vi.fn(async (method: string, params?: { entryId?: string }) => {
+      if (method === "talk.client.create") {
+        return {
+          provider: "openai",
+          transport: "webrtc",
+          voiceSessionId: "voice-drain",
+          clientSecret: "secret",
+        };
+      }
+      if (method === "talk.client.transcript") {
+        transcriptEntryIds.push(String(params?.entryId));
+      }
+      return { ok: true };
+    });
+    const session = new RealtimeTalkSession({ request } as never, "agent:main:main");
+    await session.start();
+    const context = transcriptContext(transportMock.webRtcContexts);
+
+    session.stop();
+    expect(transportMock.webRtcDrains[0]).toHaveBeenCalledOnce();
+    expect(transportMock.webRtcStops[0]).not.toHaveBeenCalled();
+    context.callbacks.onTranscript?.({ role: "user", text: "last turn", final: true });
+    await context.flushTranscriptWrites?.();
+    expect(transcriptEntryIds).toEqual(["1"]);
+
+    drain.resolve();
+    await vi.waitFor(() => expect(transportMock.webRtcStops[0]).toHaveBeenCalledOnce());
+    await vi.waitFor(() =>
+      expect(request.mock.calls.some(([method]) => method === "talk.client.close")).toBe(true),
+    );
+  });
+
+  it("waits for the previous transcript drain before starting a replacement", async () => {
+    const drain = createDeferred();
+    transportMock.nextWebRtcDrain = () => drain.promise;
+    let createCount = 0;
+    const request = vi.fn(async (method: string) => {
+      if (method === "talk.client.create") {
+        createCount += 1;
+        return {
+          provider: "openai",
+          transport: "webrtc",
+          voiceSessionId: `voice-${createCount}`,
+          clientSecret: "secret",
+        };
+      }
+      return { ok: true };
+    });
+    const session = new RealtimeTalkSession({ request } as never, "agent:main:main");
+    await session.start();
+    session.stop();
+
+    const restart = session.start();
+    await Promise.resolve();
+    expect(createCount).toBe(1);
+
+    drain.resolve();
+    await restart;
+    expect(createCount).toBe(2);
+    session.stop();
+  });
+
+  it("closes the logical voice session when the terminal status observer throws", async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === "talk.client.create") {
+        return {
+          provider: "openai",
+          transport: "webrtc",
+          voiceSessionId: "voice-fatal-observer",
+          clientSecret: "secret",
+        };
+      }
+      return { ok: true };
+    });
+    const session = new RealtimeTalkSession({ request } as never, "agent:main:main", {
+      onStatus: (status) => {
+        if (status === "error") {
+          throw new Error("status observer failed");
+        }
+      },
+    });
+    await session.start();
+
+    transcriptContext(transportMock.webRtcContexts).callbacks.onFatalError?.(
+      "terminal transcript failure",
+    );
+
+    await vi.waitFor(() =>
+      expect(request.mock.calls.some(([method]) => method === "talk.client.close")).toBe(true),
+    );
+    expect(transportMock.webRtcStops[0]).toHaveBeenCalledOnce();
+  });
+
+  it("closes the logical voice session when transport stop throws", async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === "talk.client.create") {
+        return {
+          provider: "openai",
+          transport: "webrtc",
+          voiceSessionId: "voice-stop-observer",
+          clientSecret: "secret",
+        };
+      }
+      return { ok: true };
+    });
+    const session = new RealtimeTalkSession({ request } as never, "agent:main:main");
+    await session.start();
+    transportMock.stop.mockImplementationOnce(() => {
+      throw new Error("stop observer failed");
+    });
+
+    session.stop();
+
+    await vi.waitFor(() =>
+      expect(request.mock.calls.some(([method]) => method === "talk.client.close")).toBe(true),
+    );
   });
 
   it("continues entry ids when the same voice session replaces its transport", async () => {

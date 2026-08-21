@@ -23,6 +23,8 @@ export type RealtimeTalkCallbacks = {
   onTalkEvent?: (event: RealtimeTalkEvent) => void;
   onVideoStream?: (stream: MediaStream | null) => void;
   onVideoError?: (error: unknown) => void;
+  /** Internal terminal signal used when continuing would silently lose shared history. */
+  onFatalError?: (detail: string) => void;
 };
 
 export type RealtimeTalkEventInput<TPayload = unknown> = {
@@ -50,6 +52,8 @@ export type RealtimeTalkWebRtcSdpSessionResult = {
   clientSecret: string;
   offerUrl?: string;
   offerHeaders?: Record<string, string>;
+  transcriptProtocol?: "openai-ga-items" | "openai-frameless-turns";
+  transcriptSilenceDurationMs?: number;
   model?: string;
   voice?: string;
   expiresAt?: number;
@@ -110,6 +114,8 @@ export type RealtimeTalkTransportStartResult = "ready" | "cancelled";
 export type RealtimeTalkTransport = {
   start(): Promise<RealtimeTalkTransportStartResult>;
   activate?: () => void;
+  /** Mute input immediately, then retain ownership until accepted provider finals settle. */
+  drain?: () => Promise<void>;
   stop(options?: { emitClosed?: boolean }): void;
   setVideoEnabled?: (enabled: boolean) => Promise<void>;
   switchCamera?: (videoDeviceId: string | undefined) => Promise<void>;

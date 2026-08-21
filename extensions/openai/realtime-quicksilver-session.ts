@@ -58,6 +58,7 @@ type OpenAIQuicksilverSessionRequest = RealtimeVoiceBrowserSessionCreateRequest 
   initialItems?: OpenAIQuicksilverInitialItem[];
   ownerConnId?: string;
   gaSession?: Record<string, unknown> & { model: string };
+  gaTranscriptSilenceDurationMs?: number;
   gaSideband?: {
     createBridge: (params: {
       apiKey: string;
@@ -347,6 +348,12 @@ export function createOpenAIQuicksilverBrowserSessionBroker(params: {
         transport: "webrtc",
         clientSecret: token,
         offerUrl: OPENAI_QUICKSILVER_OFFER_PATH,
+        transcriptProtocol: isGptLive ? "openai-frameless-turns" : "openai-ga-items",
+        ...(!isGptLive && request.gaSession
+          ? {
+              transcriptSilenceDurationMs: request.gaTranscriptSilenceDurationMs ?? 500,
+            }
+          : {}),
         ...(request.gaSideband ? {} : { model, voice }),
         expiresAt,
       };

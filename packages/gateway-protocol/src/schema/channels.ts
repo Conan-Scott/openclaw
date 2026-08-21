@@ -440,6 +440,10 @@ const BrowserRealtimeWebRtcSdpSessionSchema = closedObject({
   clientSecret: NonEmptyString,
   offerUrl: Type.Optional(Type.String()),
   offerHeaders: Type.Optional(Type.Record(Type.String(), Type.String())),
+  transcriptProtocol: Type.Optional(
+    Type.Union([Type.Literal("openai-ga-items"), Type.Literal("openai-frameless-turns")]),
+  ),
+  transcriptSilenceDurationMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 60_000 })),
   model: Type.Optional(Type.String()),
   voice: Type.Optional(Type.String()),
   expiresAt: Type.Optional(Type.Number()),
