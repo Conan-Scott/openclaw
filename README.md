@@ -27,6 +27,12 @@ the fixture's main browser pane.
 
 [stop-reload.png](./stop-reload.png) is the tight post-reload screenshot.
 
+The recording's directly inspectable checkpoints are also preserved as:
+
+1. [Talk active with Stop visible](./01-talk-active.png)
+2. [Stopped while the final transcript is still absent](./02-stopped-before-final.png)
+3. [Reloaded thread with the complete persisted turn](./03-reloaded-persisted.png)
+
 ## Causal timing
 
 The browser instrumentation and durable database audit are in
@@ -55,4 +61,3 @@ The PR also adds transport/owner tests for the separate ClawSweeper regression:
 Focused owner/transport suite: **49 tests passed**.  
 Full Talk/protocol slice: **10 files / 215 tests passed**.  
 The repository changed-scope typecheck, lint, and guard gate also passed.
-
