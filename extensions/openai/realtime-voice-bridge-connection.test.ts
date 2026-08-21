@@ -127,6 +127,7 @@ describe("OpenAI realtime voice bridge connection", () => {
       offerUrl: "/plugins/openai/realtime/calls",
     });
     const brokerRequest = requireRecord(createBrowserSession.mock.calls[0]?.[0], "broker request");
+    expect(brokerRequest.gaTranscriptSilenceDurationMs).toBe(650);
     expect(createBrowserSession.mock.calls[0]?.[1]).toEqual({
       type: "api-key",
       token: "test-api-key-platform",

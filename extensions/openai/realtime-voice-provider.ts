@@ -194,6 +194,7 @@ async function createOpenAIRealtimeBrowserSession(
       agentId: req.agentId,
     });
     const voice = normalizeOpenAIRealtimeVoice(req.voice) ?? config.voice ?? "alloy";
+    const transcriptSilenceDurationMs = req.silenceDurationMs ?? config.silenceDurationMs ?? 500;
     const sessionConfig = buildOpenAIRealtimeGaSessionPolicy({
       audioFormat: REALTIME_VOICE_AUDIO_FORMAT_PCM16_24KHZ,
       instructions: req.instructions,
@@ -202,7 +203,7 @@ async function createOpenAIRealtimeBrowserSession(
       noiseReduction: { type: "near_field" },
       prefixPaddingMs: req.prefixPaddingMs ?? config.prefixPaddingMs,
       reasoningEffort: normalizeOptionalString(req.reasoningEffort) ?? config.reasoningEffort,
-      silenceDurationMs: req.silenceDurationMs ?? config.silenceDurationMs,
+      silenceDurationMs: transcriptSilenceDurationMs,
       tools: normalizeOpenAIRealtimeTools(req.tools),
       vadThreshold: req.vadThreshold ?? config.vadThreshold,
       voice,
@@ -214,6 +215,7 @@ async function createOpenAIRealtimeBrowserSession(
         model,
         voice,
         gaSession: sessionConfig,
+        gaTranscriptSilenceDurationMs: transcriptSilenceDurationMs,
         gaSideband: {
           createBridge: ({ apiKey, callId, onTerminal }) => {
             const bridge = new OpenAIRealtimeBridge({

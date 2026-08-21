@@ -117,6 +117,27 @@ describe("GPT-Live session shaping", () => {
 });
 
 describe("GPT-Live offer broker", () => {
+  it("defaults omitted GA transcript silence metadata to 500 ms", async () => {
+    const { realtime } = createBroker();
+    try {
+      const reservation = await realtime.broker.createBrowserSession(
+        {
+          providerConfig: {},
+          model: "gpt-realtime-2.1",
+          gaSession: { type: "realtime", model: "gpt-realtime-2.1" },
+        },
+        { type: "api-key", token: "platform-key" },
+      );
+      expect(reservation).toMatchObject({
+        transcriptProtocol: "openai-ga-items",
+        transcriptSilenceDurationMs: 500,
+      });
+      await realtime.broker.cancelBrowserSession(reservation);
+    } finally {
+      await realtime.cleanup();
+    }
+  });
+
   it("waits for the GA sideband before returning an audio-only SDP answer and hangs up once", async () => {
     let releaseSideband!: () => void;
     const sidebandReady = new Promise<void>((resolve) => {
@@ -158,6 +179,7 @@ describe("GPT-Live offer broker", () => {
           providerConfig: {},
           model: "gpt-realtime-2.1",
           gaSession: { type: "realtime", model: "gpt-realtime-2.1" },
+          gaTranscriptSilenceDurationMs: 650,
           gaSideband: {
             createBridge,
           },
@@ -168,7 +190,7 @@ describe("GPT-Live offer broker", () => {
         throw new Error("Expected WebRTC reservation");
       }
       expect(reservation.transcriptProtocol).toBe("openai-ga-items");
-      expect(reservation.transcriptSilenceDurationMs).toBe(500);
+      expect(reservation.transcriptSilenceDurationMs).toBe(650);
       expect(reservation).not.toHaveProperty("model");
       expect(reservation).not.toHaveProperty("voice");
       const response = createResponseHarness();
