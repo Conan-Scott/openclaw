@@ -1,7 +1,11 @@
 // Gateway Protocol tests cover channels.schema behavior.
 import { Compile } from "typebox/compile";
 import { describe, expect, it } from "vitest";
-import { ChannelsStatusResultSchema, WebLoginWaitParamsSchema } from "./schema/channels.js";
+import {
+  ChannelsStatusResultSchema,
+  TalkClientCreateResultSchema,
+  WebLoginWaitParamsSchema,
+} from "./schema/channels.js";
 
 /**
  * Channel schema regressions for browser login and status diagnostics.
@@ -79,6 +83,23 @@ describe("ChannelsStatusResultSchema", () => {
           utilization: 0.98,
           cpuCoreRatio: 1.2,
         },
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("TalkClientCreateResultSchema", () => {
+  const validate = Compile(TalkClientCreateResultSchema);
+
+  it("preserves previously accepted transcript silence durations", () => {
+    expect(
+      validate.Check({
+        provider: "openai",
+        transport: "webrtc",
+        voiceSessionId: "voice-1",
+        clientSecret: "single-use-token",
+        transcriptProtocol: "openai-ga-items",
+        transcriptSilenceDurationMs: 60_001,
       }),
     ).toBe(true);
   });

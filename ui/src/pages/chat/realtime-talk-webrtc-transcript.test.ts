@@ -644,10 +644,57 @@ describe("WebRtcSdpRealtimeTalkTransport", () => {
     transport.stop();
   });
 
-  it("fails closed on an unsafe provider silence window", () => {
-    expect(() =>
-      createOpenAiTransport({}, {}, undefined, { transcriptSilenceDurationMs: 60_001 }),
-    ).toThrow("unsupported transcript silence window");
+  it("accepts and drains an existing provider silence window above the retention ceiling", async () => {
+    vi.useFakeTimers();
+    stubAnswerSdpFetch();
+    const transport = createOpenAiTransport({}, {}, undefined, {
+      transcriptSilenceDurationMs: 60_001,
+    });
+    await startAndActivate(transport);
+    const peer = FakePeerConnection.instances[0];
+    dispatchRealtimeEvent(peer, { type: "input_audio_buffer.speech_started" });
+
+    const drain = transport.drain();
+    await vi.advanceTimersByTimeAsync(60_001);
+    dispatchCommitted(peer, "input-long-vad");
+    dispatchRealtimeEvent(peer, {
+      type: "conversation.item.input_audio_transcription.completed",
+      item_id: "input-long-vad",
+      transcript: "long pause preserved",
+    });
+    await vi.advanceTimersByTimeAsync(999);
+
+    await expect(drain).resolves.toBeUndefined();
+    transport.stop();
+  });
+
+  it("bounds transcript drain retention for an extreme provider silence window", async () => {
+    vi.useFakeTimers();
+    stubAnswerSdpFetch();
+    const transport = createOpenAiTransport({}, {}, undefined, {
+      transcriptSilenceDurationMs: Number.MAX_SAFE_INTEGER,
+    });
+    await startAndActivate(transport);
+    const peer = FakePeerConnection.instances[0];
+    dispatchRealtimeEvent(peer, { type: "input_audio_buffer.speech_started" });
+
+    const drainResult = transport.drain().catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(70_999);
+    await expect(Promise.race([drainResult, Promise.resolve("pending")])).resolves.toBe("pending");
+    await vi.advanceTimersByTimeAsync(1);
+
+    await expect(drainResult).resolves.toMatchObject(
+      new Error("Realtime Talk timed out waiting for the final user transcription"),
+    );
+    transport.stop();
+  });
+
+  it("rejects unsafe provider silence window metadata", () => {
+    for (const transcriptSilenceDurationMs of [-1, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() =>
+        createOpenAiTransport({}, {}, undefined, { transcriptSilenceDurationMs }),
+      ).toThrow("unsupported transcript silence window");
+    }
   });
 
   it("persists completed user transcripts in committed item order", async () => {

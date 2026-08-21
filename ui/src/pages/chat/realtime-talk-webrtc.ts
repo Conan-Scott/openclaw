@@ -23,7 +23,10 @@ import { RealtimeTalkWebRtcTranscriptController } from "./realtime-talk-webrtc-t
 const REALTIME_TRANSCRIPT_DRAIN_DELIVERY_MARGIN_MS = 1_000;
 const REALTIME_TRANSCRIPT_DRAIN_MIN_GRACE_MS = 1_500;
 const REALTIME_TRANSCRIPT_DRAIN_COMPLETION_TIMEOUT_MS = 10_000;
-const MAX_REALTIME_TRANSCRIPT_SILENCE_MS = 60_000;
+// This bounds browser resources retained after Stop, not the provider's accepted
+// VAD configuration. Larger historical values remain valid but fail visibly if
+// their final transcript cannot settle inside the bounded shutdown window.
+const MAX_REALTIME_TRANSCRIPT_DRAIN_SILENCE_MS = 60_000;
 const cancelledSetup = Symbol("cancelledSetup");
 
 export class WebRtcSdpRealtimeTalkTransport implements RealtimeTalkTransport {
@@ -85,16 +88,13 @@ export class WebRtcSdpRealtimeTalkTransport implements RealtimeTalkTransport {
       onUserFinal: (text) => this.tools.handleUserTranscript(text),
     });
     const configuredSilenceMs = session.transcriptSilenceDurationMs ?? 500;
-    if (
-      !Number.isSafeInteger(configuredSilenceMs) ||
-      configuredSilenceMs < 0 ||
-      configuredSilenceMs > MAX_REALTIME_TRANSCRIPT_SILENCE_MS
-    ) {
+    if (!Number.isSafeInteger(configuredSilenceMs) || configuredSilenceMs < 0) {
       throw new Error("Realtime Talk provider returned an unsupported transcript silence window");
     }
     this.transcriptDrainGraceMs = Math.max(
       REALTIME_TRANSCRIPT_DRAIN_MIN_GRACE_MS,
-      configuredSilenceMs + REALTIME_TRANSCRIPT_DRAIN_DELIVERY_MARGIN_MS,
+      Math.min(configuredSilenceMs, MAX_REALTIME_TRANSCRIPT_DRAIN_SILENCE_MS) +
+        REALTIME_TRANSCRIPT_DRAIN_DELIVERY_MARGIN_MS,
     );
   }
 

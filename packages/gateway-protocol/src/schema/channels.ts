@@ -443,7 +443,7 @@ const BrowserRealtimeWebRtcSdpSessionSchema = closedObject({
   transcriptProtocol: Type.Optional(
     Type.Union([Type.Literal("openai-ga-items"), Type.Literal("openai-frameless-turns")]),
   ),
-  transcriptSilenceDurationMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 60_000 })),
+  transcriptSilenceDurationMs: Type.Optional(Type.Integer({ minimum: 0 })),
   model: Type.Optional(Type.String()),
   voice: Type.Optional(Type.String()),
   expiresAt: Type.Optional(Type.Number()),
