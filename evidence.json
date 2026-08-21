@@ -1,0 +1,39 @@
+{
+  "candidate": {
+    "gitHead": "3e2b581f6fc6417f1853771897b5a3c62b962ab7",
+    "imageDigest": "sha256:c1d80465c002d0c44b7489c9fa73c5c483d2cc577107cc1c1d713296dd141916",
+    "providerRoute": "OpenAI subscription OAuth WebRTC",
+    "platformApiKeyPresent": false,
+    "fixture": "isolated OpenShift deployment"
+  },
+  "browserScenario": {
+    "mode": "stop-reload",
+    "utterance": "Provider Direct Ordinary confirms a simple real-time reply.",
+    "speechEndedAt": 1787311042902,
+    "stopClickedAt": 1787311042903,
+    "finalizedAt": 1787311046055,
+    "finalAfterStopMs": 3152,
+    "finalAfterStop": true,
+    "persistedAfterReload": true,
+    "providerItemIdPresent": true
+  },
+  "durableAudit": {
+    "voiceSessionCount": 1,
+    "status": "closed",
+    "provider": "openai",
+    "origin": "client",
+    "transcriptCapable": true,
+    "hasUserTranscript": true,
+    "transcriptFailureCount": 0,
+    "consultRunCount": 0,
+    "voiceTranscriptEventCount": 1,
+    "role": "user",
+    "provenance": "realtime_voice",
+    "text": "Provider Direct Ordinary confirms a simple real-time reply."
+  },
+  "tests": {
+    "focusedOwnerAndTransport": "49 passed",
+    "fullTalkAndProtocolSlice": "10 files / 215 passed",
+    "changedScopeGate": "passed"
+  }
+}
