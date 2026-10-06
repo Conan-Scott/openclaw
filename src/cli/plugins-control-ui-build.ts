@@ -150,6 +150,7 @@ export async function buildPluginControlUi(params: {
       ) {
         throw new Error(
           "An immutable Control UI build has unexpected entries. Remove it and rebuild.",
+          { cause: error },
         );
       }
       // A generation published by an earlier build may still carry owner-only modes.
