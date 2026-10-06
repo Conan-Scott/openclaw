@@ -201,6 +201,13 @@ writeFileSync(
       auth: { mode: "token", token },
       controlUi: { enabled: true },
     },
+    // Bundled channel plugins stay startup-lazy until channel intent is configured.
+    // Transport startup remains disabled by OPENCLAW_SKIP_CHANNELS in this proof.
+    channels: Object.fromEntries(
+      installed.flatMap(({ metadata }) =>
+        (metadata.channels ?? []).map((channelId) => [channelId, { enabled: true }]),
+      ),
+    ),
     plugins: {
       enabled: true,
       entries: Object.fromEntries(
