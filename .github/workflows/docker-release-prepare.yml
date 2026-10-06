@@ -1,3 +1,4 @@
+# FORK-ONLY DIAGNOSTIC: never copy this workflow into the contribution branch.
 name: Prepare Docker Release
 
 on:
@@ -55,7 +56,7 @@ env:
 
 jobs:
   resolve:
-    runs-on: ${{ vars.OPENCLAW_RELEASE_RUNNER_GROUP != '' && fromJSON(format('{{"group":{0},"labels":{1}}}', toJSON(vars.OPENCLAW_RELEASE_RUNNER_GROUP), toJSON('ubuntu-24.04'))) || ('ubuntu-24.04') }}
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.identity.outputs.version }}
       include_browser: ${{ steps.identity.outputs.include_browser }}
@@ -126,7 +127,7 @@ jobs:
   build:
     name: Prepare Docker images (${{ matrix.architecture }})
     needs: resolve
-    runs-on: ${{ vars.OPENCLAW_RELEASE_RUNNER_GROUP != '' && fromJSON(format('{{"group":{0},"labels":{1}}}', toJSON(vars.OPENCLAW_RELEASE_RUNNER_GROUP), toJSON(matrix.runner))) || (matrix.runner) }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -211,7 +212,7 @@ jobs:
             GIT_COMMIT=${{ inputs.release_sha }}
             OPENCLAW_BUILD_TIMESTAMP=${{ needs.resolve.outputs.built_at }}
             OPENCLAW_DOCKER_BUILD_VERSION=${{ needs.resolve.outputs.version }}
-            OPENCLAW_EXTENSIONS=diagnostics-otel,codex
+            OPENCLAW_EXTENSIONS=diagnostics-otel,codex,workboard
           labels: |
             org.opencontainers.image.revision=${{ inputs.release_sha }}
             org.opencontainers.image.version=${{ needs.resolve.outputs.version }}
@@ -247,7 +248,7 @@ jobs:
             GIT_COMMIT=${{ inputs.release_sha }}
             OPENCLAW_BUILD_TIMESTAMP=${{ needs.resolve.outputs.built_at }}
             OPENCLAW_DOCKER_BUILD_VERSION=${{ needs.resolve.outputs.version }}
-            OPENCLAW_EXTENSIONS=diagnostics-otel,codex
+            OPENCLAW_EXTENSIONS=diagnostics-otel,codex,workboard
             OPENCLAW_INSTALL_BROWSER=1
           labels: |
             org.opencontainers.image.revision=${{ inputs.release_sha }}
@@ -284,6 +285,23 @@ jobs:
             --directory "${RUNNER_TEMP}/docker-release/oci" \
             --architecture "${ARCHITECTURE}" \
             --output "${RUNNER_TEMP}/docker-release/metadata/${ARCHITECTURE}.json"
+      # Diagnostic coverage only: the canonical proof already owns all contracts.
+      - name: Require positive bundled plugin UI coverage
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const proof = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/docker-release/metadata/${process.env.ARCHITECTURE}.json`, 'utf8'));
+          for (const image of proof.images) {
+            for (const cell of image.artifactPermissions.cells) {
+              assert(cell.runtime.pluginUiCount > 0, `${image.variant}/${cell.name}: no real plugin UI covered`);
+              assert(cell.runtime.pluginAssets > 0, `${image.variant}/${cell.name}: no real plugin assets served`);
+            }
+          }
+          NODE
       - name: Upload immutable OCI payload
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -301,7 +319,7 @@ jobs:
   seal:
     name: Seal prepared Docker images
     needs: [resolve, build]
-    runs-on: ${{ vars.OPENCLAW_RELEASE_RUNNER_GROUP != '' && fromJSON(format('{{"group":{0},"labels":{1}}}', toJSON(vars.OPENCLAW_RELEASE_RUNNER_GROUP), toJSON('ubuntu-24.04'))) || ('ubuntu-24.04') }}
+    runs-on: ubuntu-24.04
     permissions:
       actions: read
       contents: read
