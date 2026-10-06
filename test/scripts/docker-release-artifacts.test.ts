@@ -628,10 +628,12 @@ process.stdout.write(JSON.stringify(responses[args[1]]));
       const frozenBytes = JSON.stringify(fixture.manifest, null, 2) + "\n";
       writeFileSync(receiptPath, frozenBytes);
       const frozenDigest = createHash("sha256").update(frozenBytes).digest("hex");
-      const originalPayloads = fixture.manifest.architectures.map((entry) => ({
-        artifact: structuredClone(entry.artifact),
-        images: structuredClone(entry.images),
-      }));
+      const originalPayloads = fixture.manifest.architectures.map(
+        (entry: { artifact: unknown; images: unknown }) => ({
+          artifact: structuredClone(entry.artifact),
+          images: structuredClone(entry.images),
+        }),
+      );
       const readApi = vi.fn((endpoint: string) =>
         endpoint === `repos/${repository}/git/trees/${toolingSha}?recursive=1`
           ? historicalDockerContractTree(contract)
@@ -662,7 +664,7 @@ process.stdout.write(JSON.stringify(responses[args[1]]));
       );
       expect(verified.manifest.producer.runAttempt).toBe(runAttempt);
       expect(
-        verified.manifest.architectures.map((entry) => ({
+        verified.manifest.architectures.map((entry: { artifact: unknown; images: unknown }) => ({
           artifact: entry.artifact,
           images: entry.images,
         })),
