@@ -325,7 +325,9 @@ describe("native plugin browser builds", () => {
       await fs.chmod(generation, 0o700);
       await fs.chmod(script, 0o600);
       await fs.chmod(stylesheet, 0o600);
-      expect(await buildPluginControlUi({ ...project, check: true })).toEqual(first);
+      await expect(buildPluginControlUi({ ...project, check: true })).rejects.toThrow(
+        "world-readable",
+      );
       expect(await Promise.all([generations, generation, script, stylesheet].map(modeOf))).toEqual([
         "700",
         "700",
@@ -341,9 +343,30 @@ describe("native plugin browser builds", () => {
         originalAssets,
       );
       expect(await modeOf(project.rootDir)).toBe("700");
+      expect(await modeOf(path.dirname(generations))).toBe("755");
+      await fs.chmod(path.dirname(generations), 0o700);
+      await expect(buildPluginControlUi({ ...project, check: true })).rejects.toThrow(
+        "world-readable",
+      );
       expect(await modeOf(path.dirname(generations))).toBe("700");
     },
   );
+
+  it("rejects an unexpected reused generation entry without repairing it", async () => {
+    const project = await fixture();
+    const first = await buildPluginControlUi(project);
+    const generation = path.dirname(path.join(project.rootDir, first.entry));
+    const sentinel = path.join(generation, "unexpected.js");
+    await fs.writeFile(sentinel, "private unexpected data", { mode: 0o600 });
+    await expect(buildPluginControlUi({ ...project, check: true })).rejects.toThrow(
+      "unexpected entries",
+    );
+    await expect(buildPluginControlUi(project)).rejects.toThrow("unexpected entries");
+    expect(await fs.readFile(sentinel, "utf8")).toBe("private unexpected data");
+    if (process.platform !== "win32") {
+      expect((await fs.stat(sentinel)).mode & 0o777).toBe(0o600);
+    }
+  });
 
   it("bundles browser-safe primitive SDK exports", async () => {
     const project = await fixture();

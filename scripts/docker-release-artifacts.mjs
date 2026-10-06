@@ -11,6 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual, parseArgs } from "node:util";
 import { promoteDockerChannel } from "./docker-channel-promote.mjs";
 import { isDirectRunUrl } from "./lib/direct-run.mjs";
@@ -259,7 +260,7 @@ if printf '%s\\n' "$smoke_output" | grep -q "Missing workspace template:"; then 
 if [ "$smoke_status" -ne 0 ]; then echo "Agent exited $smoke_status after workspace bootstrap (provider credentials are intentionally absent)."; fi
 `;
 
-function smokeImage(directory, architecture, variant, configDigest) {
+function smokeImage(directory, architecture, variant, configDigest, artifactPlan) {
   const image = `openclaw-release-smoke:${architecture}-${variant}`;
   // Only the smoke copy enters Docker's single-image store. The OCI artifact
   // retains the original index, SBOM, and provenance for digest-preserving promotion.
@@ -288,6 +289,74 @@ function smokeImage(directory, architecture, variant, configDigest) {
     timeout: 120_000,
     stdio: "inherit",
   });
+  const toolingRoot = fileURLToPath(new URL("../", import.meta.url));
+  const identities = [
+    { name: "default", uid: 1000, gid: 1000 },
+    { name: "arbitrary-uid-gid-zero", user: "1000950000:0", uid: 1000950000, gid: 0 },
+    { name: "unrelated-uid-gid", user: "1000950000:1000950001", uid: 1000950000, gid: 1000950001 },
+  ];
+  const cells = identities.map(({ name, user, uid, gid }) => {
+    const isolation = [
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "--read-only",
+      "--cap-drop",
+      "ALL",
+      "--security-opt",
+      "no-new-privileges",
+      "--tmpfs",
+      "/tmp:rw,nosuid,nodev,mode=1777",
+      "--tmpfs",
+      "/permission-state:rw,nosuid,nodev,mode=1777",
+      "--mount",
+      `type=bind,source=${path.join(toolingRoot, "scripts")},target=/permission-proof/scripts,readonly`,
+      "--mount",
+      `type=bind,source=${path.join(toolingRoot, "src/shared/artifact-permissions.ts")},target=/permission-proof/src/shared/artifact-permissions.ts,readonly`,
+      ...(user ? ["--user", user] : []),
+      "--env",
+      `OPENCLAW_PERMISSION_PROOF_BROWSER=${variant === "browser" ? "1" : "0"}`,
+      "--env",
+      `OPENCLAW_PERMISSION_PROOF_LEGACY=${artifactPlan.state === "legacy-source" ? "1" : "0"}`,
+      "--entrypoint",
+      "node",
+      image,
+    ];
+    const artifact = JSON.parse(
+      run(
+        "docker",
+        [
+          ...isolation,
+          "/permission-proof/scripts/check-artifact-permissions.mts",
+          "--root",
+          "/app",
+          "--image",
+          "--read-files",
+          "--source-sha",
+          artifactPlan.sourceSha,
+          ...(artifactPlan.state === "legacy-source" ? ["--legacy-source"] : []),
+        ],
+        { timeout: 300_000 },
+      ),
+    );
+    const runtime = JSON.parse(
+      run(
+        "docker",
+        [...isolation, "/permission-proof/scripts/e2e/lib/artifact-permissions/runtime-proof.mjs"],
+        { timeout: 300_000 },
+      ),
+    );
+    requireValue(
+      runtime.uid === uid &&
+        runtime.gid === gid &&
+        Array.isArray(runtime.groups) &&
+        runtime.groups.every((group) => group === gid),
+      `Unexpected runtime identity/supplementary groups: ${name}`,
+    );
+    return { name, uid, gid, artifact, runtime };
+  });
+  return { schemaVersion: 1, configDigest, cells };
 }
 
 function releaseContext(env) {
@@ -314,6 +383,10 @@ function releaseContext(env) {
       job.workflow_ref?.startsWith(`${env.GITHUB_REPOSITORY}/${WORKFLOW_PATH}@`),
     "Docker preparation must execute its pinned canonical workflow.",
   );
+  requireValue(
+    ["required", "legacy-source"].includes(env.RUNTIME_ARTIFACT_PLAN),
+    "Missing immutable-source artifact-plan qualification.",
+  );
   return {
     schemaVersion: 1,
     repository: env.GITHUB_REPOSITORY,
@@ -324,6 +397,10 @@ function releaseContext(env) {
     imageTagSuffix: env.IMAGE_TAG_SUFFIX ?? "",
     builtAt: env.BUILT_AT,
     includeBrowser: env.INCLUDE_BROWSER === "true",
+    artifactPlan: {
+      sourceSha: env.RELEASE_SHA,
+      state: env.RUNTIME_ARTIFACT_PLAN,
+    },
     producer: {
       runId: env.GITHUB_RUN_ID,
       runAttempt: env.GITHUB_RUN_ATTEMPT,
@@ -348,8 +425,20 @@ async function prepareArchitecture(values, env) {
       architecture,
       expectedDigest: variant === "default" ? env.DEFAULT_DIGEST : env.BROWSER_DIGEST,
     });
-    smokeImage(directory, architecture, variant, image.configDigest);
-    images.push({ variant, ...image, smoke: "success", attestations: "success" });
+    const artifactPermissions = smokeImage(
+      directory,
+      architecture,
+      variant,
+      image.configDigest,
+      context.artifactPlan,
+    );
+    images.push({
+      variant,
+      ...image,
+      artifactPermissions,
+      smoke: "success",
+      attestations: "success",
+    });
   }
   writeJson(values.output, { ...context, architecture, images });
 }
@@ -480,6 +569,11 @@ export function validateDockerReleaseManifest(manifest, expected) {
     "Prepared Docker browser support differs from the finalized source.",
   );
   requireValue(
+    manifest.artifactPlan?.sourceSha === manifest.sourceSha &&
+      ["required", "legacy-source"].includes(manifest.artifactPlan.state),
+    "Prepared Docker source artifact-plan qualification is missing or stale.",
+  );
+  requireValue(
     Array.isArray(manifest.architectures) && manifest.architectures.length === ARCHITECTURES.length,
     "Prepared Docker release must include both native architectures.",
   );
@@ -499,6 +593,51 @@ export function validateDockerReleaseManifest(manifest, expected) {
     );
     for (const [imageIndex, variant] of variants.entries()) {
       const image = entry.images[imageIndex];
+      const proof = image.artifactPermissions;
+      const identities = [
+        ["default", 1000, 1000],
+        ["arbitrary-uid-gid-zero", 1000950000, 0],
+        ["unrelated-uid-gid", 1000950000, 1000950001],
+      ];
+      requireValue(
+        proof?.schemaVersion === 1 &&
+          proof.configDigest === image.configDigest &&
+          Array.isArray(proof.cells) &&
+          proof.cells.length === identities.length &&
+          identities.every(([name, uid, gid], index) => {
+            const cell = proof.cells[index];
+            return (
+              cell.name === name &&
+              cell.uid === uid &&
+              cell.gid === gid &&
+              cell.artifact?.schemaVersion === 1 &&
+              cell.artifact.readFiles === true &&
+              cell.artifact.planState ===
+                (manifest.artifactPlan.state === "required" ? "verified" : "legacy-source") &&
+              (manifest.artifactPlan.state === "legacy-source" ||
+                cell.artifact.sourceSha === manifest.artifactPlan.sourceSha) &&
+              Number.isSafeInteger(cell.artifact.files) &&
+              cell.artifact.files > 0 &&
+              cell.runtime?.schemaVersion === 1 &&
+              cell.runtime.uid === uid &&
+              cell.runtime.gid === gid &&
+              Array.isArray(cell.runtime.groups) &&
+              cell.runtime.groups.every((group) => group === gid) &&
+              cell.runtime.anonymousCatalogDenied === true &&
+              cell.runtime.offlineToolchain === true &&
+              cell.runtime.browser === (variant === "browser") &&
+              cell.runtime.coreAssets > 0 &&
+              Number.isSafeInteger(cell.runtime.compressedAssets) &&
+              cell.runtime.compressedAssets >=
+                (manifest.artifactPlan.state === "required" ? 1 : 0) &&
+              Number.isSafeInteger(cell.runtime.pluginUiCount) &&
+              cell.runtime.pluginUiCount >= 0 &&
+              Number.isSafeInteger(cell.runtime.pluginAssets) &&
+              cell.runtime.pluginAssets >= cell.runtime.pluginUiCount
+            );
+          }),
+        "Prepared Docker arbitrary-UID artifact/runtime proof is incomplete or stale.",
+      );
       requireValue(
         image.variant === variant &&
           image.smoke === "success" &&

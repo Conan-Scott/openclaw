@@ -63,6 +63,7 @@ function copyUiFixture(root: string): void {
     "src/shared/freebsd-process-identity.ts",
     "src/shared/freebsd-process-identity-native.ts",
     "src/shared/pid-alive.ts",
+    "src/shared/artifact-permissions.ts",
     "ui/package.json",
     "ui/src/build-info-normalizers.ts",
     "packages/normalization-core/src/record-coerce.ts",
@@ -608,6 +609,7 @@ process.exitCode = ${exitCode};
         fsGuard,
         `
 const fs = require("node:fs");
+process.umask(0o077);
 const rename = fs.renameSync;
 let remainingDenials = ${publishDenials};
 const waits = [];
@@ -682,6 +684,18 @@ require("node:module").syncBuiltinESMExports();
         }
       }
       if (expectedExit === 0) {
+        if (process.platform !== "win32") {
+          expect(fs.statSync(path.join(root, "dist")).mode & 0o777).toBe(0o755);
+          for (const file of [
+            output,
+            ...fs
+              .readdirSync(output, { recursive: true })
+              .map((name) => path.join(output, String(name))),
+          ]) {
+            const stat = fs.statSync(file);
+            expect(stat.mode & 0o777).toBe(stat.isDirectory() ? 0o755 : 0o644);
+          }
+        }
         const calls = result.stdout
           .trim()
           .split("\n")

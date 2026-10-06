@@ -304,6 +304,14 @@ describe("resolveBuildAllSteps", () => {
     "records %s runtime phase completeness",
     async (profile) => {
       const cwd = tempDirs.make("openclaw-phase-stamp-");
+      fs.mkdirSync(path.join(cwd, "extensions"));
+      writeFixture(cwd, "package.json", '{"name":"openclaw","type":"module"}');
+      writeFixture(
+        cwd,
+        "tsdown.config.ts",
+        'export default {entry:{entry:"src/entry.ts"},outDir:"dist",outExtensions:()=>({js:".js"})};',
+      );
+      writeFixture(cwd, "dist/entry.js", "export {};\n");
       const steps = resolveBuildAllSteps(profile, {})
         .filter((step) => ["runtime-postbuild", "runtime-postbuild-stamp"].includes(step.label))
         .map((step) =>

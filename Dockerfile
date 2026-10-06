@@ -445,6 +445,15 @@ USER node
 # Verify the shipped toolchain needs no privileged writes or first-run downloads.
 RUN COREPACK_ENABLE_NETWORK=0 PNPM_CONFIG_OFFLINE=true pnpm --version
 
+# Verify the final immutable application closure after every runtime copy/writer.
+# Mounted tooling is not shipped. An unrelated UID/GID proves actual reads;
+# mode inspection as root alone cannot establish arbitrary-UID usability.
+USER 1000950000:1000950001
+RUN --mount=from=build,source=/app/scripts/check-artifact-permissions.mts,target=/permission-proof/scripts/check-artifact-permissions.mts \
+    --mount=from=build,source=/app/src/shared/artifact-permissions.ts,target=/permission-proof/src/shared/artifact-permissions.ts \
+    node /permission-proof/scripts/check-artifact-permissions.mts --root /app --image --read-files
+USER node
+
 # Start gateway server with default config.
 # Binds to loopback (127.0.0.1) by default for security.
 #

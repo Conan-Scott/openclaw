@@ -1,0 +1,183 @@
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+import {
+  assertBuiltArtifactPermissions,
+  normalizeBuildArtifactPermissions,
+} from "../../scripts/check-artifact-permissions.mts";
+import { createScriptTestHarness } from "./test-helpers.js";
+
+const { createTempDir } = createScriptTestHarness();
+const sha = "a".repeat(40);
+function fixture() {
+  const rootDir = createTempDir("openclaw-artifact-plan-");
+  // Fixture artifacts start with distribution modes, independent of host setgid inheritance.
+  fs.chmodSync(rootDir, 0o755);
+  const files = {
+    "package.json": '{"name":"openclaw","type":"module"}',
+    "tsdown.config.ts":
+      'export default [{entry:{entry:"src/entry.ts","private-module":"src/private-module.ts"},outDir:"dist",outExtensions:()=>({js:".js"})}];',
+    "extensions/demo/package.json": JSON.stringify({
+      name: "@openclaw/demo",
+      openclaw: { extensions: ["./index.ts"] },
+    }),
+    "extensions/demo/openclaw.plugin.json": JSON.stringify({
+      id: "demo",
+      controlUi: {
+        entry: "dist/control-ui/generation/index.js",
+        styles: ["dist/control-ui/generation/index.css"],
+      },
+    }),
+    "extensions/demo/index.ts": "export {};\n",
+    "dist/entry.js": "export {};\n",
+    "dist/private-module.js": "export {};\n",
+    "dist/control-ui/index.html": "<html></html>\n",
+    "dist/extensions/demo/index.js": "export {};\n",
+    "dist/extensions/demo/package.json": '{"name":"@openclaw/demo","type":"module"}',
+    "dist/extensions/demo/openclaw.plugin.json": JSON.stringify({
+      id: "demo",
+      controlUi: {
+        entry: "dist/control-ui/generation/index.js",
+        styles: ["dist/control-ui/generation/index.css"],
+      },
+    }),
+    "dist/extensions/demo/dist/control-ui/generation/index.js": "export {};\n",
+    "dist/extensions/demo/dist/control-ui/generation/index.css": "body {}\n",
+  };
+  for (const [file, bytes] of Object.entries(files)) {
+    const target = path.join(rootDir, file);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, bytes);
+    if (file.startsWith("dist/extensions/")) {
+      const overlay = path.join(
+        rootDir,
+        file.replace(/^dist\/extensions\//u, "dist-runtime/extensions/"),
+      );
+      fs.mkdirSync(path.dirname(overlay), { recursive: true });
+      fs.writeFileSync(overlay, bytes);
+    }
+  }
+  return {
+    rootDir,
+    env: {
+      ...process.env,
+      GIT_COMMIT: sha,
+      OPENCLAW_INTERNAL_DOCKER_BUILD_PLUGIN_IDS: undefined,
+      OPENCLAW_BUNDLED_PLUGIN_BUILD_IDS: undefined,
+    },
+  };
+}
+
+describe("finished artifact acceptance", () => {
+  it("records compiler and plugin membership independently of surviving outputs and repairs only generated modes", async () => {
+    const params = fixture();
+    const source = path.join(params.rootDir, "extensions/demo");
+    fs.chmodSync(source, 0o700);
+    fs.chmodSync(path.join(source, "index.ts"), 0o600);
+    const built = path.join(params.rootDir, "dist/extensions/demo/dist/control-ui");
+    fs.chmodSync(built, 0o700);
+    fs.chmodSync(path.join(built, "generation/index.js"), 0o600);
+    const plan = await normalizeBuildArtifactPermissions(params);
+    expect(plan.requiredFiles).toContain("dist/private-module.js");
+    expect(plan.plugins).toMatchObject([
+      {
+        id: "demo",
+        root: "dist/extensions/demo",
+        controlUi: { entry: "dist/control-ui/generation/index.js" },
+      },
+    ]);
+    expect(assertBuiltArtifactPermissions(params)).toMatchObject({
+      schemaVersion: 1,
+      sourceSha: sha,
+      plugins: 1,
+      planState: "verified",
+    });
+    expect(fs.readFileSync(path.join(source, "index.ts"), "utf8")).toBe("export {};\n");
+    if (process.platform !== "win32") {
+      expect(fs.statSync(source).mode & 0o777).toBe(0o700);
+      expect(fs.statSync(path.join(source, "index.ts")).mode & 0o777).toBe(0o600);
+    }
+    fs.rmSync(path.join(params.rootDir, "dist/extensions/demo"), { recursive: true });
+    await normalizeBuildArtifactPermissions(params);
+    expect(() => assertBuiltArtifactPermissions(params)).toThrow(
+      /Missing required runtime artifact/u,
+    );
+  });
+
+  it("rejects whole private-module omission after a warm rebuild instead of blessing existing files", async () => {
+    const params = fixture();
+    await normalizeBuildArtifactPermissions(params);
+    fs.unlinkSync(path.join(params.rootDir, "dist/private-module.js"));
+    await normalizeBuildArtifactPermissions(params);
+    expect(() => assertBuiltArtifactPermissions(params)).toThrow("dist/private-module.js");
+  });
+
+  it("checks a finished image without its source inventory or loader and never repairs its inputs", async () => {
+    const params = fixture();
+    await normalizeBuildArtifactPermissions(params);
+    for (const directory of ["extensions", "tsdown.config.ts"])
+      fs.rmSync(path.join(params.rootDir, directory), { recursive: true });
+    // Mounted proof needs exactly this zero-dependency runtime import closure.
+    const checker = path.join(params.rootDir, "scripts/check-artifact-permissions.mts");
+    const helper = path.join(params.rootDir, "src/shared/artifact-permissions.ts");
+    fs.mkdirSync(path.dirname(checker), { recursive: true });
+    fs.mkdirSync(path.dirname(helper), { recursive: true });
+    fs.copyFileSync(path.join(process.cwd(), "scripts/check-artifact-permissions.mts"), checker);
+    fs.copyFileSync(path.join(process.cwd(), "src/shared/artifact-permissions.ts"), helper);
+    fs.chmodSync(params.rootDir, 0o755);
+    const output = execFileSync(
+      process.execPath,
+      [checker, "--root", params.rootDir, "--image", "--read-files", "--source-sha", sha],
+      { encoding: "utf8", env: params.env },
+    );
+    expect(JSON.parse(output)).toMatchObject({
+      schemaVersion: 1,
+      readFiles: true,
+      sourceSha: sha,
+      plugins: 1,
+      planState: "verified",
+    });
+    const extra = path.join(params.rootDir, "dist/extensions/unexpected");
+    fs.mkdirSync(extra);
+    expect(() => assertBuiltArtifactPermissions({ ...params, image: true })).toThrow(/membership/u);
+    fs.rmSync(extra, { recursive: true });
+    const binary = path.join(params.rootDir, "node_modules/fixture/bin/run.js");
+    fs.mkdirSync(path.dirname(binary), { recursive: true });
+    fs.writeFileSync(
+      path.join(params.rootDir, "node_modules/fixture/package.json"),
+      '{"name":"fixture","bin":"bin/run.js"}',
+    );
+    fs.writeFileSync(binary, "#!/usr/bin/env node\n", { mode: 0o644 });
+    if (process.platform !== "win32")
+      expect(() => assertBuiltArtifactPermissions({ ...params, image: true })).toThrow(
+        /executable/u,
+      );
+    fs.chmodSync(binary, 0o755);
+    expect(assertBuiltArtifactPermissions({ ...params, image: true })).toMatchObject({
+      planState: "verified",
+    });
+    const blocked = path.join(params.rootDir, "dist/control-ui");
+    fs.chmodSync(blocked, 0o700);
+    if (process.platform !== "win32") {
+      expect(() =>
+        assertBuiltArtifactPermissions({ ...params, image: true, readFiles: true }),
+      ).toThrow(/world/u);
+      expect(fs.statSync(blocked).mode & 0o777).toBe(0o700);
+    }
+    expect(() =>
+      assertBuiltArtifactPermissions({ ...params, image: true, sourceSha: "b".repeat(40) }),
+    ).toThrow(/expected source SHA/u);
+  });
+
+  it("requires persisted membership, with an explicitly labeled legacy-only fallback", () => {
+    const params = fixture();
+    expect(() => assertBuiltArtifactPermissions({ ...params, image: true })).toThrow(
+      /artifact plan/u,
+    );
+    fs.chmodSync(params.rootDir, 0o755);
+    expect(
+      assertBuiltArtifactPermissions({ ...params, image: true, legacySource: true }),
+    ).toMatchObject({ planState: "legacy-source" });
+  });
+});

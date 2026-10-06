@@ -15,7 +15,10 @@ import {
   verifyDockerReleaseProducer,
 } from "../../scripts/docker-release-artifacts.mjs";
 import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
-import { candidatePublicationFixture } from "./candidate-publication.test-support.js";
+import {
+  candidatePublicationFixture,
+  dockerArtifactPermissionProof,
+} from "./candidate-publication.test-support.js";
 
 const sourceSha = "a".repeat(40);
 const toolingSha = "b".repeat(40);
@@ -123,6 +126,7 @@ async function createPreparedRelease(includeBrowser = true, version = "2026.8.1-
     imageTagSuffix: "-r20260901",
     builtAt: "2026-09-01T00:00:00.000Z",
     includeBrowser,
+    artifactPlan: { sourceSha, state: "required" },
     producer: {
       runId,
       runAttempt,
@@ -211,7 +215,16 @@ async function createPreparedRelease(includeBrowser = true, version = "2026.8.1-
         architecture,
         expectedDigest: image.indexDigest,
       });
-      images.push({ variant, ...verified, smoke: "success", attestations: "success" });
+      images.push({
+        variant,
+        ...verified,
+        artifactPermissions: dockerArtifactPermissionProof(
+          verified.configDigest,
+          variant === "browser",
+        ),
+        smoke: "success",
+        attestations: "success",
+      });
     }
     writeJson(path.join(root, "metadata", `${architecture}.json`), {
       ...context,
@@ -339,6 +352,11 @@ async function createCandidateDockerPublication(recovered = false) {
         version: fixture.docker.version,
         builtAt: fixture.docker.builtAt,
       }),
+    );
+    entry.images[0]!.artifactPermissions = dockerArtifactPermissionProof(
+      entry.images[0]!.configDigest,
+      false,
+      fixture.q,
     );
   }
   const bytes = JSON.stringify(fixture.docker, null, 2) + "\n";
@@ -786,6 +804,78 @@ describe("prepared Docker publication", () => {
         "does not match the release",
       );
     }
+  });
+
+  it("refuses historical smoke-only and incomplete arbitrary-UID receipts", async () => {
+    const { manifest } = await createPreparedRelease(false);
+    const expected = {
+      repository,
+      sourceSha,
+      tag: manifest.tag,
+      imageTagSuffix: manifest.imageTagSuffix,
+      artifactName: manifest.artifactName,
+      runId,
+      runAttempt,
+    };
+    for (const kind of [
+      "historical",
+      "stale-image",
+      "missing-identity",
+      "no-read-proof",
+      "supplementary-root",
+      "missing-core",
+      "missing-plugin-assets",
+      "legacy-bypass",
+      "stale-source",
+      "mismatched-checked-source",
+    ]) {
+      const changed = structuredClone(manifest);
+      const image = changed.architectures[1].images[0];
+      const proof = image.artifactPermissions;
+      if (kind === "historical") delete image.artifactPermissions;
+      if (kind === "stale-image") proof.configDigest = `sha256:${"f".repeat(64)}`;
+      if (kind === "missing-identity") proof.cells.pop();
+      if (kind === "no-read-proof") proof.cells[2].artifact.readFiles = false;
+      if (kind === "supplementary-root") proof.cells[2].runtime.groups.push(0);
+      if (kind === "missing-core") proof.cells[2].runtime.compressedAssets = 0;
+      if (kind === "missing-plugin-assets") proof.cells[2].runtime.pluginAssets = 0;
+      if (kind === "legacy-bypass") proof.cells[2].artifact.planState = "legacy-source";
+      if (kind === "stale-source") changed.artifactPlan.sourceSha = "c".repeat(40);
+      if (kind === "mismatched-checked-source") proof.cells[2].artifact.sourceSha = "c".repeat(40);
+      expect(() => validateDockerReleaseManifest(changed, expected), kind).toThrow(
+        kind === "stale-source"
+          ? "source artifact-plan qualification"
+          : "arbitrary-UID artifact/runtime proof",
+      );
+    }
+  });
+
+  it("qualifies historical source explicitly without accepting legacy proof for new source", async () => {
+    const { manifest } = await createPreparedRelease(false);
+    const expected = {
+      repository,
+      sourceSha,
+      tag: manifest.tag,
+      imageTagSuffix: manifest.imageTagSuffix,
+      artifactName: manifest.artifactName,
+      runId,
+      runAttempt,
+    };
+    manifest.artifactPlan.state = "legacy-source";
+    expect(() => validateDockerReleaseManifest(manifest, expected)).toThrow(
+      "arbitrary-UID artifact/runtime proof",
+    );
+    for (const entry of manifest.architectures)
+      for (const image of entry.images)
+        for (const cell of image.artifactPermissions.cells) {
+          cell.artifact.planState = "legacy-source";
+          cell.runtime.compressedAssets = 0;
+        }
+    expect(validateDockerReleaseManifest(manifest, expected)).toBe(manifest);
+    manifest.artifactPlan.state = "required";
+    expect(() => validateDockerReleaseManifest(manifest, expected)).toThrow(
+      "arbitrary-UID artifact/runtime proof",
+    );
   });
 
   it("rejects a correction for another package base or an unsupported release train", () => {
