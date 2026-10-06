@@ -604,8 +604,8 @@ export function validateDockerReleaseManifest(manifest, expected) {
           proof.configDigest === image.configDigest &&
           Array.isArray(proof.cells) &&
           proof.cells.length === identities.length &&
-          identities.every(([name, uid, gid], index) => {
-            const cell = proof.cells[index];
+          identities.every(([name, uid, gid], identityIndex) => {
+            const cell = proof.cells[identityIndex];
             return (
               cell.name === name &&
               cell.uid === uid &&

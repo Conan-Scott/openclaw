@@ -564,10 +564,9 @@ describe("plugin publication artifact", () => {
     const inspection = inspectPackageTarballBytes(createTarball(entries));
     const canonical = inspectPackageTarballBytes(
       createTarball(
-        entries.map((entry) => ({
-          ...entry,
-          mode: entry.type === "5" ? 0o755 : 0o644,
-        })),
+        entries.map((entry) =>
+          Object.assign({}, entry, { mode: entry.type === "5" ? 0o755 : 0o644 }),
+        ),
       ),
     );
     expect(inspection.inventory).toEqual(canonical.inventory);

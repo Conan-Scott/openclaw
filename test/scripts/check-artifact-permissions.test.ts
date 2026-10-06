@@ -116,8 +116,9 @@ describe("finished artifact acceptance", () => {
   it("checks a finished image without its source inventory or loader and never repairs its inputs", async () => {
     const params = fixture();
     await normalizeBuildArtifactPermissions(params);
-    for (const directory of ["extensions", "tsdown.config.ts"])
+    for (const directory of ["extensions", "tsdown.config.ts"]) {
       fs.rmSync(path.join(params.rootDir, directory), { recursive: true });
+    }
     // Mounted proof needs exactly this zero-dependency runtime import closure.
     const checker = path.join(params.rootDir, "scripts/check-artifact-permissions.mts");
     const helper = path.join(params.rootDir, "src/shared/artifact-permissions.ts");
@@ -138,6 +139,24 @@ describe("finished artifact acceptance", () => {
       plugins: 1,
       planState: "verified",
     });
+    const planPath = path.join(params.rootDir, "dist/runtime-artifact-plan.json");
+    const planBytes = fs.readFileSync(planPath, "utf8");
+    const plan = JSON.parse(planBytes);
+    plan.sourceSha = [sha];
+    fs.writeFileSync(planPath, JSON.stringify(plan));
+    expect(() => assertBuiltArtifactPermissions({ ...params, image: true })).toThrow(
+      /source SHA must be a string/u,
+    );
+    delete plan.sourceSha;
+    fs.writeFileSync(planPath, JSON.stringify(plan));
+    expect(assertBuiltArtifactPermissions({ ...params, image: true, env: {} })).not.toHaveProperty(
+      "sourceSha",
+    );
+    fs.writeFileSync(planPath, planBytes);
+    expect(assertBuiltArtifactPermissions({ ...params, image: true })).toMatchObject({
+      sourceSha: sha,
+      planState: "verified",
+    });
     const extra = path.join(params.rootDir, "dist/extensions/unexpected");
     fs.mkdirSync(extra);
     expect(() => assertBuiltArtifactPermissions({ ...params, image: true })).toThrow(/membership/u);
@@ -149,10 +168,11 @@ describe("finished artifact acceptance", () => {
       '{"name":"fixture","bin":"bin/run.js"}',
     );
     fs.writeFileSync(binary, "#!/usr/bin/env node\n", { mode: 0o644 });
-    if (process.platform !== "win32")
+    if (process.platform !== "win32") {
       expect(() => assertBuiltArtifactPermissions({ ...params, image: true })).toThrow(
         /executable/u,
       );
+    }
     fs.chmodSync(binary, 0o755);
     expect(assertBuiltArtifactPermissions({ ...params, image: true })).toMatchObject({
       planState: "verified",

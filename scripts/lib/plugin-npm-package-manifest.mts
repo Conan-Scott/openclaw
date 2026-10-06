@@ -1153,10 +1153,16 @@ function normalizeStagedPluginPackagePermissions(packageDir: string): void {
     };
   });
   const aliases = [...new Set(entries.flatMap(({ alias }) => (alias ? [alias] : [])))];
-  for (const alias of aliases) fs.unlinkSync(alias);
+  for (const alias of aliases) {
+    fs.unlinkSync(alias);
+  }
   for (const { absolutePath, bytes, stat, alias } of entries) {
-    if (!bytes) continue;
-    if (!alias) fs.unlinkSync(absolutePath);
+    if (!bytes) {
+      continue;
+    }
+    if (!alias) {
+      fs.unlinkSync(absolutePath);
+    }
     fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
     fs.writeFileSync(absolutePath, bytes, { mode: stat.mode & 0o777 });
   }

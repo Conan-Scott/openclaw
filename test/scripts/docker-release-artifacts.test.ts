@@ -832,16 +832,36 @@ describe("prepared Docker publication", () => {
       const changed = structuredClone(manifest);
       const image = changed.architectures[1].images[0];
       const proof = image.artifactPermissions;
-      if (kind === "historical") delete image.artifactPermissions;
-      if (kind === "stale-image") proof.configDigest = `sha256:${"f".repeat(64)}`;
-      if (kind === "missing-identity") proof.cells.pop();
-      if (kind === "no-read-proof") proof.cells[2].artifact.readFiles = false;
-      if (kind === "supplementary-root") proof.cells[2].runtime.groups.push(0);
-      if (kind === "missing-core") proof.cells[2].runtime.compressedAssets = 0;
-      if (kind === "missing-plugin-assets") proof.cells[2].runtime.pluginAssets = 0;
-      if (kind === "legacy-bypass") proof.cells[2].artifact.planState = "legacy-source";
-      if (kind === "stale-source") changed.artifactPlan.sourceSha = "c".repeat(40);
-      if (kind === "mismatched-checked-source") proof.cells[2].artifact.sourceSha = "c".repeat(40);
+      if (kind === "historical") {
+        delete image.artifactPermissions;
+      }
+      if (kind === "stale-image") {
+        proof.configDigest = `sha256:${"f".repeat(64)}`;
+      }
+      if (kind === "missing-identity") {
+        proof.cells.pop();
+      }
+      if (kind === "no-read-proof") {
+        proof.cells[2].artifact.readFiles = false;
+      }
+      if (kind === "supplementary-root") {
+        proof.cells[2].runtime.groups.push(0);
+      }
+      if (kind === "missing-core") {
+        proof.cells[2].runtime.compressedAssets = 0;
+      }
+      if (kind === "missing-plugin-assets") {
+        proof.cells[2].runtime.pluginAssets = 0;
+      }
+      if (kind === "legacy-bypass") {
+        proof.cells[2].artifact.planState = "legacy-source";
+      }
+      if (kind === "stale-source") {
+        changed.artifactPlan.sourceSha = "c".repeat(40);
+      }
+      if (kind === "mismatched-checked-source") {
+        proof.cells[2].artifact.sourceSha = "c".repeat(40);
+      }
       expect(() => validateDockerReleaseManifest(changed, expected), kind).toThrow(
         kind === "stale-source"
           ? "source artifact-plan qualification"
@@ -865,12 +885,14 @@ describe("prepared Docker publication", () => {
     expect(() => validateDockerReleaseManifest(manifest, expected)).toThrow(
       "arbitrary-UID artifact/runtime proof",
     );
-    for (const entry of manifest.architectures)
-      for (const image of entry.images)
+    for (const entry of manifest.architectures) {
+      for (const image of entry.images) {
         for (const cell of image.artifactPermissions.cells) {
           cell.artifact.planState = "legacy-source";
           cell.runtime.compressedAssets = 0;
         }
+      }
+    }
     expect(validateDockerReleaseManifest(manifest, expected)).toBe(manifest);
     manifest.artifactPlan.state = "required";
     expect(() => validateDockerReleaseManifest(manifest, expected)).toThrow(

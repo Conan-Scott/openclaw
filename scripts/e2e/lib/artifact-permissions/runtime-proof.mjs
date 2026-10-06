@@ -41,7 +41,7 @@ function http(url, headers = {}) {
   });
 }
 
-async function assertAsset(url, file, type, headers = {}, encoding) {
+async function assertAsset(url, file, type, headers, encoding) {
   const response = await http(url, { "Accept-Encoding": "identity", ...headers });
   assert.equal(response.status, 200, `Asset HTTP status: ${url}`);
   assert.match(String(response.headers["content-type"]), type, `Asset MIME: ${url}`);
@@ -106,7 +106,9 @@ async function assertAnonymousCatalogDenied() {
 function browserAssets(directory, prefix = "") {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const name = `${prefix}${entry.name}`;
-    if (entry.isDirectory()) return browserAssets(path.join(directory, entry.name), `${name}/`);
+    if (entry.isDirectory()) {
+      return browserAssets(path.join(directory, entry.name), `${name}/`);
+    }
     return entry.isFile() && /\.(?:m?js|css)$/u.test(name) ? [name] : [];
   });
 }
@@ -139,14 +141,19 @@ assert.match(
 let browser = false;
 if (process.env.OPENCLAW_PERMISSION_PROOF_BROWSER === "1") {
   const findBrowser = (directory, depth = 0) => {
-    if (depth > 5) return undefined;
+    if (depth > 5) {
+      return undefined;
+    }
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const file = path.join(directory, entry.name);
-      if (entry.isFile() && ["chrome", "chromium", "chrome-headless-shell"].includes(entry.name))
+      if (entry.isFile() && ["chrome", "chromium", "chrome-headless-shell"].includes(entry.name)) {
         return file;
+      }
       if (entry.isDirectory()) {
         const found = findBrowser(file, depth + 1);
-        if (found) return found;
+        if (found) {
+          return found;
+        }
       }
     }
     return undefined;
@@ -163,7 +170,9 @@ const installed = readdirSync(`${root}/dist/extensions`, { withFileTypes: true }
   (entry) => {
     const pluginRoot = `${root}/dist/extensions/${entry.name}`;
     const manifest = `${pluginRoot}/openclaw.plugin.json`;
-    if (!entry.isDirectory() || !existsSync(manifest)) return [];
+    if (!entry.isDirectory() || !existsSync(manifest)) {
+      return [];
+    }
     const metadata = json(manifest);
     return metadata.controlUi ? [{ root: pluginRoot, metadata }] : [];
   },
@@ -172,11 +181,13 @@ if (process.env.OPENCLAW_PERMISSION_PROOF_LEGACY !== "1") {
   const plan = json(`${root}/dist/runtime-artifact-plan.json`);
   assert.equal(plan.schemaVersion, 1);
   assert.deepEqual(
-    installed.map(({ metadata }) => metadata.id).sort(),
+    installed
+      .map(({ metadata }) => metadata.id)
+      .toSorted((left, right) => (left < right ? -1 : left > right ? 1 : 0)),
     plan.plugins
       .filter((plugin) => plugin.controlUi)
       .map((plugin) => plugin.id)
-      .sort(),
+      .toSorted((left, right) => (left < right ? -1 : left > right ? 1 : 0)),
     "Final image UI membership differs from the source-derived artifact plan",
   );
 }
@@ -205,10 +216,11 @@ const gateway = spawn(process.execPath, ["/app/openclaw.mjs", "gateway", "run"],
   stdio: ["ignore", "pipe", "pipe"],
 });
 let log = "";
-for (const stream of [gateway.stdout, gateway.stderr])
+for (const stream of [gateway.stdout, gateway.stderr]) {
   stream.on("data", (chunk) => {
     log = (log + chunk).slice(-64 * 1024);
   });
+}
 let signalTimer;
 try {
   const deadline = Date.now() + 180_000;
@@ -220,7 +232,9 @@ try {
     } catch {
       /* Startup admission owns readiness. */
     }
-    if (ready) break;
+    if (ready) {
+      break;
+    }
     await delay(100);
   }
   assert(ready, `Gateway startup timed out: ${log}`);
@@ -237,7 +251,9 @@ try {
   const normalizeAsset = (reference) => new URL(reference, "http://proof/").pathname;
   const servedPaths = new Set(references.map(normalizeAsset));
   for (const tag of original.match(/<(?:script|link)\b[^>]*>/gu) ?? []) {
-    if (!tag.startsWith("<script") && !/rel=["']stylesheet["']/u.test(tag)) continue;
+    if (!tag.startsWith("<script") && !/rel=["']stylesheet["']/u.test(tag)) {
+      continue;
+    }
     for (const reference of assetReferences(tag)) {
       assert(
         servedPaths.has(normalizeAsset(reference)),
@@ -355,7 +371,9 @@ try {
   throw error;
 } finally {
   if (gateway.exitCode === null && gateway.signalCode === null) {
-    const closed = new Promise((resolve) => gateway.once("close", resolve));
+    const closed = new Promise((resolve) => {
+      gateway.once("close", resolve);
+    });
     gateway.kill("SIGTERM");
     signalTimer = setTimeout(() => gateway.kill("SIGKILL"), 10_000);
     await closed;

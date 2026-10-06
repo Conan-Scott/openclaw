@@ -63,16 +63,19 @@ function relative(value: unknown): string {
   return result;
 }
 function paths(value: unknown): string[] {
-  if (!Array.isArray(value)) throw new Error("Artifact paths must be an array");
+  if (!Array.isArray(value)) {
+    throw new Error("Artifact paths must be an array");
+  }
   return value.map(relative);
 }
 function unique(values: Iterable<string>): string[] {
-  return [...new Set(values)].sort();
+  return [...new Set(values)].toSorted();
 }
 function sourceSha(env: NodeJS.ProcessEnv): string | undefined {
   const value = env.GIT_COMMIT?.trim() || env.GIT_SHA?.trim();
-  if (value && !/^[a-f0-9]{40}$/iu.test(value))
+  if (value && !/^[a-f0-9]{40}$/iu.test(value)) {
     throw new Error("Artifact source SHA must be a full 40-character hexadecimal SHA");
+  }
   return value?.toLowerCase();
 }
 function readPlan(root: string): ArtifactPlan {
@@ -86,11 +89,13 @@ function readPlan(root: string): ArtifactPlan {
   }
   const plugins = raw.plugins.map((value) => {
     const plugin = object(value);
-    if (typeof plugin.id !== "string" || !/^[a-z0-9][a-z0-9-]*$/u.test(plugin.id))
+    if (typeof plugin.id !== "string" || !/^[a-z0-9][a-z0-9-]*$/u.test(plugin.id)) {
       throw new Error("Invalid artifact plugin ID");
+    }
     const pluginRoot = relative(plugin.root);
-    if (pluginRoot !== `dist/extensions/${plugin.id}`)
+    if (pluginRoot !== `dist/extensions/${plugin.id}`) {
       throw new Error("Plugin artifact root does not match its ID");
+    }
     let controlUi: PluginPlan["controlUi"];
     if (plugin.controlUi !== undefined) {
       const ui = object(plugin.controlUi);
@@ -106,10 +111,13 @@ function readPlan(root: string): ArtifactPlan {
       ...(controlUi ? { controlUi } : {}),
     };
   });
-  if (new Set(plugins.map(({ id }) => id)).size !== plugins.length)
+  if (new Set(plugins.map(({ id }) => id)).size !== plugins.length) {
     throw new Error("Duplicate artifact plugin IDs");
-  const sha =
-    raw.sourceSha === undefined ? undefined : sourceSha({ GIT_COMMIT: String(raw.sourceSha) });
+  }
+  if (raw.sourceSha !== undefined && typeof raw.sourceSha !== "string") {
+    throw new Error("Artifact source SHA must be a string");
+  }
+  const sha = raw.sourceSha === undefined ? undefined : sourceSha({ GIT_COMMIT: raw.sourceSha });
   return {
     schemaVersion: 1,
     ...(sha ? { sourceSha: sha } : {}),
@@ -156,7 +164,7 @@ for(const file of ["tsdown.config.ts","tsdown.ai.config.ts"]){
  }
 }
 if(!files.length)throw new Error("Compiler emitted no root output inventory");
-process.stdout.write(JSON.stringify([...new Set(files)].sort()));
+process.stdout.write(JSON.stringify([...new Set(files)].toSorted()));
 `,
     ],
     {
@@ -167,10 +175,11 @@ process.stdout.write(JSON.stringify([...new Set(files)].sort()));
       maxBuffer: 8 * 1024 * 1024,
     },
   );
-  if (result.status !== 0)
+  if (result.status !== 0) {
     throw new Error(
       `Cannot derive compiler artifact plan: ${result.stderr || result.error?.message}`,
     );
+  }
   return paths(JSON.parse(result.stdout));
 }
 
@@ -207,7 +216,9 @@ async function createSourcePlan(root: string, params: BuildParams): Promise<Arti
       requiredFiles.add(`node_modules/${manifest.name}/${output.join("/")}`);
     }
   }
-  for (const file of declaredArtifactExecutableFiles(rootManifest)) executableFiles.add(file);
+  for (const file of declaredArtifactExecutableFiles(rootManifest)) {
+    executableFiles.add(file);
+  }
   for (const entry of collectSourceCheckoutPluginBuildEntries({ cwd: root, env })) {
     const pluginRoot = `dist/extensions/${entry.id}`;
     const sourceRoot = path.join(root, "extensions", entry.id);
@@ -218,8 +229,12 @@ async function createSourcePlan(root: string, params: BuildParams): Promise<Arti
       (file: string) =>
         `${pluginRoot}/${relative(file).replace(/\.[^.]+$/u, entry.runtimeExtension)}`,
     );
-    if (entry.hasManifest) files.push(`${pluginRoot}/openclaw.plugin.json`);
-    if (entry.hasPackageJson) files.push(`${pluginRoot}/package.json`);
+    if (entry.hasManifest) {
+      files.push(`${pluginRoot}/openclaw.plugin.json`);
+    }
+    if (entry.hasPackageJson) {
+      files.push(`${pluginRoot}/package.json`);
+    }
     let controlUi: PluginPlan["controlUi"];
     if (manifest?.controlUi !== undefined) {
       const ui = object(manifest.controlUi);
@@ -238,20 +253,24 @@ async function createSourcePlan(root: string, params: BuildParams): Promise<Arti
       PLUGIN_ACTIVITY_ICON_PATH,
       ...collectPluginThemeAssetPaths(manifest ?? {}),
     ]) {
-      if (fs.lstatSync(path.join(sourceRoot, asset), { throwIfNoEntry: false })?.isFile())
+      if (fs.lstatSync(path.join(sourceRoot, asset), { throwIfNoEntry: false })?.isFile()) {
         files.push(`${pluginRoot}/${relative(asset)}`);
+      }
     }
     const toolIcons = path.join(sourceRoot, PLUGIN_TOOL_ACTIVITY_ICON_DIR);
     if (fs.lstatSync(toolIcons, { throwIfNoEntry: false })?.isDirectory()) {
       for (const icon of fs.readdirSync(toolIcons, { withFileTypes: true })) {
-        if (icon.isFile() && icon.name.endsWith(".svg"))
+        if (icon.isFile() && icon.name.endsWith(".svg")) {
           files.push(`${pluginRoot}/${PLUGIN_TOOL_ACTIVITY_ICON_DIR}/${icon.name}`);
+        }
       }
     }
-    for (const asset of resolvePackageStaticAssetEntries(entry.packageJson ?? {}))
+    for (const asset of resolvePackageStaticAssetEntries(entry.packageJson ?? {})) {
       files.push(`${pluginRoot}/${relative(asset.output)}`);
-    for (const file of declaredArtifactExecutableFiles(entry.packageJson ?? {}))
+    }
+    for (const file of declaredArtifactExecutableFiles(entry.packageJson ?? {})) {
       executableFiles.add(`${pluginRoot}/${file}`);
+    }
     for (const file of files) {
       requiredFiles.add(file);
       sourceRequiredFiles.push(file.replace(/^dist\/extensions\//u, "dist-runtime/extensions/"));
@@ -264,18 +283,23 @@ async function createSourcePlan(root: string, params: BuildParams): Promise<Arti
     });
   }
   const generatedRoots = new Set(["dist", "dist-runtime"]);
-  for (const output of TSDOWN_PACKAGE_OUTPUT_ROOTS)
-    if (fs.existsSync(path.join(root, output))) generatedRoots.add(output);
+  for (const output of TSDOWN_PACKAGE_OUTPUT_ROOTS) {
+    if (fs.existsSync(path.join(root, output))) {
+      generatedRoots.add(output);
+    }
+  }
   const selectedPlugins = new Set(plugins.map(({ id }) => id));
   // Metadata publication retires unselected plugin directories even if a
   // private compiler harness emitted an extra plugin-owned entry first.
   for (const file of requiredFiles) {
-    if (file.startsWith("dist/extensions/") && !selectedPlugins.has(file.split("/")[2]!))
+    if (file.startsWith("dist/extensions/") && !selectedPlugins.has(file.split("/")[2]!)) {
       requiredFiles.delete(file);
+    }
   }
   for (const output of listGeneratedExtensionAssetSources({ rootDir: root, env })) {
-    if (selectedPlugins.has(output.split("/")[1]!) && fs.existsSync(path.join(root, output)))
+    if (selectedPlugins.has(output.split("/")[1]!) && fs.existsSync(path.join(root, output))) {
       generatedRoots.add(relative(output));
+    }
   }
   const identity =
     sourceSha(env) ??
@@ -307,7 +331,9 @@ export async function normalizeBuildArtifactPermissions(params: BuildParams = {}
   ensureGeneratedArtifactDirectory(path.join(root, "dist"), root);
   for (const output of plan.generatedRoots) {
     const target = path.join(root, output);
-    if (!fs.existsSync(target)) continue;
+    if (!fs.existsSync(target)) {
+      continue;
+    }
     const owner =
       output.startsWith("extensions/") || output.startsWith("packages/")
         ? path.join(root, ...output.split("/").slice(0, 2))
@@ -328,8 +354,9 @@ export async function normalizeBuildArtifactPermissions(params: BuildParams = {}
   // compiler's plan, never inferred from whatever output happens to survive.
   const planPath = path.join(root, PLAN);
   const oldPlan = fs.lstatSync(planPath, { throwIfNoEntry: false });
-  if (oldPlan && (!oldPlan.isFile() || oldPlan.nlink > 1))
+  if (oldPlan && (!oldPlan.isFile() || oldPlan.nlink > 1)) {
     throw new Error("Artifact plan must be a private regular generated file");
+  }
   fs.writeFileSync(planPath, `${JSON.stringify(plan, null, 2)}\n`, { mode: 0o644 });
   fs.chmodSync(planPath, 0o644);
   return plan;
@@ -338,16 +365,19 @@ export async function normalizeBuildArtifactPermissions(params: BuildParams = {}
 function requireFiles(root: string, files: string[]) {
   for (const file of files) {
     const target = path.join(root, file);
-    if (!fs.statSync(target, { throwIfNoEntry: false })?.isFile())
+    if (!fs.statSync(target, { throwIfNoEntry: false })?.isFile()) {
       throw new Error(`Missing required runtime artifact: ${file}`);
-    if (!fs.realpathSync(target).startsWith(`${root}${path.sep}`))
+    }
+    if (!fs.realpathSync(target).startsWith(`${root}${path.sep}`)) {
       throw new Error(`Runtime artifact escapes distribution: ${file}`);
+    }
   }
 }
 function validateSourceIdentity(root: string, plan: ArtifactPlan, env: NodeJS.ProcessEnv) {
   const expected = sourceSha(env);
-  if (expected && plan.sourceSha !== expected)
+  if (expected && plan.sourceSha !== expected) {
     throw new Error("Runtime artifact plan does not match source SHA");
+  }
   const buildInfo = path.join(root, "dist/build-info.json");
   if (fs.existsSync(buildInfo)) {
     const info = json(buildInfo);
@@ -367,9 +397,12 @@ function retainedExecutables(root: string): string[] {
   const visited = new Set<string>();
   const visit = (directory: string) => {
     const real = fs.realpathSync(directory);
-    if (real !== root && !real.startsWith(`${root}${path.sep}`))
+    if (real !== root && !real.startsWith(`${root}${path.sep}`)) {
       throw new Error(`Dependency escapes immutable image: ${directory}`);
-    if (visited.has(real)) return;
+    }
+    if (visited.has(real)) {
+      return;
+    }
     visited.add(real);
     for (const entry of fs.readdirSync(real, { withFileTypes: true })) {
       const file = path.join(real, entry.name);
@@ -383,10 +416,15 @@ function retainedExecutables(root: string): string[] {
         (path.basename(parent).startsWith("@") &&
           path.basename(path.dirname(parent)) === "node_modules");
       if (entry.name === "package.json" && entry.isFile() && packageRoot) {
-        for (const executable of declaredArtifactExecutableFiles(json(file)))
+        for (const executable of declaredArtifactExecutableFiles(json(file))) {
           files.add(path.relative(root, path.join(real, executable)).replaceAll(path.sep, "/"));
-      } else if (entry.isDirectory() || (entry.isSymbolicLink() && fs.statSync(file).isDirectory()))
+        }
+      } else if (
+        entry.isDirectory() ||
+        (entry.isSymbolicLink() && fs.statSync(file).isDirectory())
+      ) {
         visit(file);
+      }
     }
   };
   visit(root);
@@ -411,19 +449,24 @@ export function assertBuiltArtifactPermissions(params: CheckParams = {}) {
       plugins: [],
     };
   } else {
-    if (!fs.lstatSync(planPath, { throwIfNoEntry: false })?.isFile())
+    if (!fs.lstatSync(planPath, { throwIfNoEntry: false })?.isFile()) {
       throw new Error("Missing regular source-derived runtime artifact plan");
+    }
     plan = readPlan(root);
   }
   // Historical artifacts have no source-derived inventory to bind. Their explicit
   // legacy-source result must not claim current inventory/provenance guarantees.
-  if (planState === "verified") validateSourceIdentity(root, plan, params.env ?? process.env);
+  if (planState === "verified") {
+    validateSourceIdentity(root, plan, params.env ?? process.env);
+  }
   const expectedSha =
     params.sourceSha === undefined ? undefined : sourceSha({ GIT_COMMIT: params.sourceSha });
-  if (params.sourceSha !== undefined && !expectedSha)
+  if (params.sourceSha !== undefined && !expectedSha) {
     throw new Error("Expected source SHA cannot be empty");
-  if (expectedSha && plan.sourceSha !== expectedSha && planState !== "legacy-source")
+  }
+  if (expectedSha && plan.sourceSha !== expectedSha && planState !== "legacy-source") {
     throw new Error("Runtime artifact plan does not match expected source SHA");
+  }
   requireFiles(root, [
     ...plan.requiredFiles,
     ...plan.plugins.flatMap((plugin) => plugin.requiredFiles),
@@ -436,25 +479,29 @@ export function assertBuiltArtifactPermissions(params: CheckParams = {}) {
           .readdirSync(extensionRoot, { withFileTypes: true })
           .filter((entry) => entry.isDirectory() && entry.name !== "node_modules")
           .map((entry) => entry.name)
-          .sort()
+          .toSorted()
       : [];
-    if (JSON.stringify(installed) !== JSON.stringify(plan.plugins.map(({ id }) => id).sort())) {
+    if (JSON.stringify(installed) !== JSON.stringify(plan.plugins.map(({ id }) => id).toSorted())) {
       throw new Error("Finished bundled plugin membership differs from the source artifact plan");
     }
   }
   for (const plugin of plan.plugins) {
-    if (!plugin.controlUi) continue;
+    if (!plugin.controlUi) {
+      continue;
+    }
     const manifest = json(path.join(root, plugin.root, "openclaw.plugin.json"));
     const ui = object(manifest.controlUi);
     const retained = {
       entry: relative(ui.entry),
       ...(ui.styles === undefined ? {} : { styles: paths(ui.styles) }),
     };
-    if (JSON.stringify(retained) !== JSON.stringify(plugin.controlUi))
+    if (JSON.stringify(retained) !== JSON.stringify(plugin.controlUi)) {
       throw new Error(`Plugin UI metadata differs from the source artifact plan: ${plugin.id}`);
+    }
   }
-  if (params.image || params.requireUi || plan.requireUi)
+  if (params.image || params.requireUi || plan.requireUi) {
     requireFiles(root, ["dist/control-ui/index.html"]);
+  }
   let files = 0;
   let directories = 0;
   if (params.image) {
@@ -468,7 +515,9 @@ export function assertBuiltArtifactPermissions(params: CheckParams = {}) {
   } else {
     for (const output of plan.generatedRoots) {
       const target = path.join(root, output);
-      if (!fs.existsSync(target)) continue;
+      if (!fs.existsSync(target)) {
+        continue;
+      }
       const owner =
         output.startsWith("extensions/") || output.startsWith("packages/")
           ? path.join(root, ...output.split("/").slice(0, 2))
@@ -486,8 +535,9 @@ export function assertBuiltArtifactPermissions(params: CheckParams = {}) {
       directories += result.directories;
     }
   }
-  if (files === 0 || directories === 0)
+  if (files === 0 || directories === 0) {
     throw new Error("Artifact acceptance inspected no runtime files/directories");
+  }
   return {
     schemaVersion: 1,
     ...(plan.sourceSha ? { sourceSha: plan.sourceSha } : {}),
@@ -513,11 +563,13 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
       "--write-plan",
     ]);
     for (let index = 0; index < args.length; index++) {
-      if (!known.has(args[index]!))
+      if (!known.has(args[index]!)) {
         throw new Error(`Unknown artifact checker argument: ${args[index]}`);
+      }
       if (args[index] === "--root" || args[index] === "--source-sha") {
-        if (!args[++index] || args[index]!.startsWith("--"))
+        if (!args[++index] || args[index]!.startsWith("--")) {
           throw new Error("Artifact option requires a value");
+        }
       }
     }
     const sourceIndex = args.indexOf("--source-sha");
@@ -529,8 +581,9 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
       legacySource: args.includes("--legacy-source"),
     };
     if (args.includes("--normalize") || args.includes("--write-plan")) {
-      if (params.image || params.legacySource)
+      if (params.image || params.legacySource) {
         throw new Error("Image and legacy acceptance are read-only");
+      }
       await normalizeBuildArtifactPermissions(params);
     }
     console.log(JSON.stringify(assertBuiltArtifactPermissions(params)));
