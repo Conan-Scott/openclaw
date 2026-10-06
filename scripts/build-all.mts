@@ -685,7 +685,8 @@ export async function runBuildAllSteps(
     const artifactParams = {
       rootDir: cwd,
       requireUi: steps.some((step) => step.label === "ui:build"),
-      env: buildEnv,
+      // Match postbuild's effective asset contract, including profile overrides.
+      env: runtimeEnv,
     };
     const startedAt = now();
     await normalizeBuildArtifactPermissions(artifactParams);

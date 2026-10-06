@@ -20,7 +20,10 @@ function fixture() {
       'export default [{entry:{entry:"src/entry.ts","private-module":"src/private-module.ts"},outDir:"dist",outExtensions:()=>({js:".js"})}];',
     "extensions/demo/package.json": JSON.stringify({
       name: "@openclaw/demo",
-      openclaw: { extensions: ["./index.ts"] },
+      openclaw: {
+        extensions: ["./index.ts"],
+        build: { staticAssets: [{ source: "assets/help.txt", output: "assets/help.txt" }] },
+      },
     }),
     "extensions/demo/openclaw.plugin.json": JSON.stringify({
       id: "demo",
@@ -44,6 +47,7 @@ function fixture() {
     }),
     "dist/extensions/demo/dist/control-ui/generation/index.js": "export {};\n",
     "dist/extensions/demo/dist/control-ui/generation/index.css": "body {}\n",
+    "dist/extensions/demo/assets/help.txt": "help\n",
   };
   for (const [file, bytes] of Object.entries(files)) {
     const target = path.join(rootDir, file);
@@ -58,18 +62,85 @@ function fixture() {
       fs.writeFileSync(overlay, bytes);
     }
   }
-  return {
-    rootDir,
-    env: {
-      ...process.env,
-      GIT_COMMIT: sha,
-      OPENCLAW_INTERNAL_DOCKER_BUILD_PLUGIN_IDS: undefined,
-      OPENCLAW_BUNDLED_PLUGIN_BUILD_IDS: undefined,
-    },
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    GIT_COMMIT: sha,
+    OPENCLAW_RUNTIME_POSTBUILD_STATIC_ASSETS: undefined,
+    OPENCLAW_INTERNAL_DOCKER_BUILD_PLUGIN_IDS: undefined,
+    OPENCLAW_BUNDLED_PLUGIN_BUILD_IDS: undefined,
   };
+  return { rootDir, env };
 }
 
 describe("finished artifact acceptance", () => {
+  it("records deliberately skipped plugin assets without weakening finished-image acceptance", async () => {
+    const params = fixture();
+    params.env.OPENCLAW_RUNTIME_POSTBUILD_STATIC_ASSETS = "0";
+    const plan = await normalizeBuildArtifactPermissions(params);
+    expect(plan.staticAssets).toBe(false);
+    expect(plan.plugins[0]?.controlUi).toMatchObject({
+      entry: "dist/control-ui/generation/index.js",
+    });
+    expect(plan.requiredFiles).not.toContain(
+      "dist/extensions/demo/dist/control-ui/generation/index.js",
+    );
+    expect(plan.requiredFiles).not.toContain("dist/extensions/demo/assets/help.txt");
+    // Surviving assets do not promote a partial build into an image contract.
+    expect(() => assertBuiltArtifactPermissions({ ...params, image: true })).toThrow(
+      /complete static asset build contract/u,
+    );
+    for (const prefix of ["dist/extensions/demo", "dist-runtime/extensions/demo"]) {
+      fs.rmSync(path.join(params.rootDir, prefix, "dist/control-ui"), { recursive: true });
+      fs.unlinkSync(path.join(params.rootDir, prefix, "assets/help.txt"));
+    }
+    fs.rmSync(path.join(params.rootDir, "dist/control-ui"), { recursive: true });
+    await normalizeBuildArtifactPermissions(params);
+    // Acceptance consumes the recorded producer contract, not the checking shell's env.
+    expect(assertBuiltArtifactPermissions({ ...params, env: { GIT_COMMIT: sha } })).toMatchObject({
+      planState: "verified",
+      plugins: 1,
+    });
+  });
+
+  it("replaces a skipped contract on return to full assets and rejects stale prior UI generations", async () => {
+    const params = fixture();
+    await normalizeBuildArtifactPermissions(params);
+    await normalizeBuildArtifactPermissions({
+      ...params,
+      env: { ...params.env, OPENCLAW_RUNTIME_POSTBUILD_STATIC_ASSETS: "0" },
+    });
+    const manifest = {
+      id: "demo",
+      controlUi: { entry: "dist/control-ui/next-generation/index.js" },
+    };
+    for (const prefix of ["extensions", "dist/extensions", "dist-runtime/extensions"]) {
+      fs.writeFileSync(
+        path.join(params.rootDir, prefix, "demo/openclaw.plugin.json"),
+        JSON.stringify(manifest),
+      );
+    }
+    const full = await normalizeBuildArtifactPermissions(params);
+    expect(full.staticAssets).toBe(true);
+    expect(full.requiredFiles).toContain(
+      "dist/extensions/demo/dist/control-ui/next-generation/index.js",
+    );
+    expect(() => assertBuiltArtifactPermissions(params)).toThrow(
+      "dist/extensions/demo/dist/control-ui/next-generation/index.js",
+    );
+    for (const prefix of ["dist/extensions", "dist-runtime/extensions"]) {
+      const target = path.join(params.rootDir, prefix, "demo", manifest.controlUi.entry);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, "export {};\n");
+    }
+    await normalizeBuildArtifactPermissions(params);
+    expect(assertBuiltArtifactPermissions(params)).toMatchObject({ planState: "verified" });
+    fs.unlinkSync(path.join(params.rootDir, "dist/extensions/demo/assets/help.txt"));
+    await normalizeBuildArtifactPermissions(params);
+    expect(() => assertBuiltArtifactPermissions(params)).toThrow(
+      "dist/extensions/demo/assets/help.txt",
+    );
+  });
+
   it("records compiler and plugin membership independently of surviving outputs and repairs only generated modes", async () => {
     const params = fixture();
     const source = path.join(params.rootDir, "extensions/demo");

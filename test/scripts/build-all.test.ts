@@ -300,9 +300,14 @@ describe("resolveBuildAllSteps", () => {
     expect(runner.logger.error).toHaveBeenCalledWith(message);
   });
 
-  it.each(["gatewayWatch", "cliStartup"])(
-    "records %s runtime phase completeness",
-    async (profile) => {
+  it.each([
+    { profile: "gatewayWatch", restore: false },
+    { profile: "cliStartup", restore: false },
+    { profile: "gatewayWatch", restore: true },
+    { profile: "cliStartup", restore: true },
+  ])(
+    "records $profile runtime phase and selected UI plugin completeness (restore=$restore)",
+    async ({ profile, restore }) => {
       const cwd = tempDirs.make("openclaw-phase-stamp-");
       fs.mkdirSync(path.join(cwd, "extensions"));
       writeFixture(cwd, "package.json", '{"name":"openclaw","type":"module"}');
@@ -312,6 +317,28 @@ describe("resolveBuildAllSteps", () => {
         'export default {entry:{entry:"src/entry.ts"},outDir:"dist",outExtensions:()=>({js:".js"})};',
       );
       writeFixture(cwd, "dist/entry.js", "export {};\n");
+      const manifest = JSON.stringify({
+        id: "demo",
+        controlUi: { entry: "dist/control-ui/index.js" },
+      });
+      writeFixture(cwd, "extensions/demo/index.ts", "export {};\n");
+      writeFixture(cwd, "extensions/demo/openclaw.plugin.json", manifest);
+      writeFixture(
+        cwd,
+        "extensions/demo/package.json",
+        JSON.stringify({
+          name: "@openclaw/demo",
+          openclaw: {
+            extensions: ["./index.ts"],
+            build: { staticAssets: [{ source: "assets/help.txt", output: "assets/help.txt" }] },
+          },
+        }),
+      );
+      for (const prefix of ["dist/extensions", "dist-runtime/extensions"]) {
+        writeFixture(cwd, `${prefix}/demo/index.js`, "export {};\n");
+        writeFixture(cwd, `${prefix}/demo/openclaw.plugin.json`, manifest);
+        writeFixture(cwd, `${prefix}/demo/package.json`, '{"name":"@openclaw/demo"}');
+      }
       const steps = resolveBuildAllSteps(profile, {})
         .filter((step) => ["runtime-postbuild", "runtime-postbuild-stamp"].includes(step.label))
         .map((step) =>
@@ -319,10 +346,34 @@ describe("resolveBuildAllSteps", () => {
             ? Object.assign({}, step, { args: ["-e", "process.exit(0)"] })
             : step,
         );
+      const cachedStep = {
+        label: "restored-artifacts",
+        args: ["-e", "process.exit(0)"],
+        cache: {
+          inputs: ["package.json"],
+          outputs: ["dist", "dist-runtime"],
+          restore: "always" as const,
+        },
+      };
+      if (restore) {
+        // A previous/full plan restored by a cache is not the current profile's authority.
+        writeFixture(cwd, "dist/runtime-artifact-plan.json", '{"staticAssets":true}');
+        const cacheParams = { rootDir: cwd };
+        writeBuildStepCacheStamp(
+          cachedStep,
+          resolveBuildStepCacheState(cachedStep, cacheParams),
+          cacheParams,
+        );
+        fs.rmSync(path.join(cwd, "dist"), { recursive: true });
+        fs.rmSync(path.join(cwd, "dist-runtime"), { recursive: true });
+        steps.unshift(cachedStep);
+      }
       const result = await runBuildAllSteps(profile, {
         cwd,
         env: {},
         steps,
+        resolveCacheState: (step) => resolveBuildStepCacheState(step, { rootDir: cwd, env: {} }),
+        restoreCache: (state) => restoreBuildStepCacheOutputs(state, { rootDir: cwd }),
         logger: { error() {}, warn() {} },
         memoryLimit: buildMemoryLimit(16),
       });
@@ -331,6 +382,19 @@ describe("resolveBuildAllSteps", () => {
         JSON.parse(fs.readFileSync(path.join(cwd, "dist/.runtime-postbuildstamp"), "utf8"))
           .staticAssets,
       ).toBe(false);
+      const plan = JSON.parse(
+        fs.readFileSync(path.join(cwd, "dist/runtime-artifact-plan.json"), "utf8"),
+      );
+      expect(plan.staticAssets).toBe(false);
+      expect(plan.plugins).toMatchObject([
+        { id: "demo", controlUi: { entry: "dist/control-ui/index.js" } },
+      ]);
+      expect(plan.requiredFiles).not.toContain("dist/extensions/demo/dist/control-ui/index.js");
+      expect(plan.requiredFiles).not.toContain("dist/extensions/demo/assets/help.txt");
+      expect(result.timings.at(-1)?.label).toBe("artifact-permissions");
+      if (restore) {
+        expect(result.timings[0]).toMatchObject({ label: "restored-artifacts", status: "cached" });
+      }
     },
   );
 

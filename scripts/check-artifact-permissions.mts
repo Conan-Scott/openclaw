@@ -21,6 +21,7 @@ type ArtifactPlan = {
   schemaVersion: 1;
   sourceSha?: string;
   requireUi: boolean;
+  staticAssets: boolean;
   requiredFiles: string[];
   sourceRequiredFiles: string[];
   executableFiles: string[];
@@ -83,6 +84,7 @@ function readPlan(root: string): ArtifactPlan {
   if (
     raw.schemaVersion !== 1 ||
     typeof raw.requireUi !== "boolean" ||
+    typeof raw.staticAssets !== "boolean" ||
     !Array.isArray(raw.plugins)
   ) {
     throw new Error("Unsupported runtime artifact plan");
@@ -122,6 +124,7 @@ function readPlan(root: string): ArtifactPlan {
     schemaVersion: 1,
     ...(sha ? { sourceSha: sha } : {}),
     requireUi: raw.requireUi,
+    staticAssets: raw.staticAssets,
     requiredFiles: paths(raw.requiredFiles),
     sourceRequiredFiles: paths(raw.sourceRequiredFiles),
     executableFiles: paths(raw.executableFiles),
@@ -187,13 +190,17 @@ async function createSourcePlan(root: string, params: BuildParams): Promise<Arti
   const env = params.env ?? process.env;
   const { collectSourceCheckoutPluginBuildEntries } =
     await import("./lib/bundled-plugin-build-entries.mjs");
-  const { listGeneratedExtensionAssetSources, resolvePackageStaticAssetEntries } =
-    await import("./lib/static-extension-assets.mts");
+  const {
+    listGeneratedExtensionAssetSources,
+    resolvePackageStaticAssetEntries,
+    shouldCopyStaticExtensionAssets,
+  } = await import("./lib/static-extension-assets.mts");
   const { TSDOWN_PACKAGE_OUTPUT_ROOTS } = await import("./lib/tsdown-output-roots.mts");
   const { collectPluginThemeAssetPaths } = await import("./lib/plugin-theme-assets.mts");
   const { PORTABLE_PLUGIN_ICON_PATH, PLUGIN_ACTIVITY_ICON_PATH, PLUGIN_TOOL_ACTIVITY_ICON_DIR } =
     await import("../src/plugins/portable-icon-paths.ts");
   const compiled = compiledOutputPlan(root, env);
+  const staticAssets = shouldCopyStaticExtensionAssets({ env });
   const requiredFiles = new Set(compiled.filter((file) => file.startsWith("dist/")));
   const sourceRequiredFiles = compiled.filter((file) => file.startsWith("packages/"));
   const executableFiles = new Set<string>();
@@ -242,10 +249,12 @@ async function createSourcePlan(root: string, params: BuildParams): Promise<Arti
         entry: relative(ui.entry),
         ...(ui.styles === undefined ? {} : { styles: paths(ui.styles) }),
       };
-      files.push(
-        `${pluginRoot}/${controlUi.entry}`,
-        ...(controlUi.styles ?? []).map((file) => `${pluginRoot}/${file}`),
-      );
+      if (staticAssets) {
+        files.push(
+          `${pluginRoot}/${controlUi.entry}`,
+          ...(controlUi.styles ?? []).map((file) => `${pluginRoot}/${file}`),
+        );
+      }
     }
     for (const asset of [
       "README.md",
@@ -265,8 +274,10 @@ async function createSourcePlan(root: string, params: BuildParams): Promise<Arti
         }
       }
     }
-    for (const asset of resolvePackageStaticAssetEntries(entry.packageJson ?? {})) {
-      files.push(`${pluginRoot}/${relative(asset.output)}`);
+    if (staticAssets) {
+      for (const asset of resolvePackageStaticAssetEntries(entry.packageJson ?? {})) {
+        files.push(`${pluginRoot}/${relative(asset.output)}`);
+      }
     }
     for (const file of declaredArtifactExecutableFiles(entry.packageJson ?? {})) {
       executableFiles.add(`${pluginRoot}/${file}`);
@@ -296,7 +307,9 @@ async function createSourcePlan(root: string, params: BuildParams): Promise<Arti
       requiredFiles.delete(file);
     }
   }
-  for (const output of listGeneratedExtensionAssetSources({ rootDir: root, env })) {
+  for (const output of staticAssets
+    ? listGeneratedExtensionAssetSources({ rootDir: root, env })
+    : []) {
     if (selectedPlugins.has(output.split("/")[1]!) && fs.existsSync(path.join(root, output))) {
       generatedRoots.add(relative(output));
     }
@@ -316,6 +329,7 @@ async function createSourcePlan(root: string, params: BuildParams): Promise<Arti
     schemaVersion: 1,
     ...(sha ? { sourceSha: sha } : {}),
     requireUi: params.requireUi ?? false,
+    staticAssets,
     requiredFiles: unique(requiredFiles),
     sourceRequiredFiles: unique(sourceRequiredFiles),
     executableFiles: unique(executableFiles),
@@ -442,6 +456,7 @@ export function assertBuiltArtifactPermissions(params: CheckParams = {}) {
     plan = {
       schemaVersion: 1,
       requireUi: true,
+      staticAssets: true,
       requiredFiles: ["dist/entry.js"],
       sourceRequiredFiles: [],
       executableFiles: [],
@@ -466,6 +481,9 @@ export function assertBuiltArtifactPermissions(params: CheckParams = {}) {
   }
   if (expectedSha && plan.sourceSha !== expectedSha && planState !== "legacy-source") {
     throw new Error("Runtime artifact plan does not match expected source SHA");
+  }
+  if (params.image && !plan.staticAssets) {
+    throw new Error("Image acceptance requires a complete static asset build contract");
   }
   requireFiles(root, [
     ...plan.requiredFiles,
