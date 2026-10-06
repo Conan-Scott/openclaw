@@ -251,14 +251,14 @@ try {
   assert.match(document.body.toString(), /<\/html>/iu);
   const original = readFileSync(`${root}/dist/control-ui/index.html`, "utf8");
   const assetReferences = (html) =>
-    [...html.matchAll(/(?:src|href)=["']([^"']+\.(?:js|css)(?:\?[^"']*)?)["']/gu)].map(
-      (match) => match[1],
-    );
+    [...html.matchAll(/(?:src|href)=["']([^"']+)["']/giu)]
+      .map((match) => match[1])
+      .filter((reference) => /\.(?:js|css)(?:\?[^"']*)?$/u.test(reference));
   const references = assetReferences(document.body.toString());
   const normalizeAsset = (reference) => new URL(reference, "http://proof/").pathname;
   const servedPaths = new Set(references.map(normalizeAsset));
-  for (const tag of original.match(/<(?:script|link)\b[^>]*>/gu) ?? []) {
-    if (!tag.startsWith("<script") && !/rel=["']stylesheet["']/u.test(tag)) {
+  for (const tag of original.match(/<(?:script|link)\b[^>]*>/giu) ?? []) {
+    if (!/^<script\b/iu.test(tag) && !/rel=["']stylesheet["']/iu.test(tag)) {
       continue;
     }
     for (const reference of assetReferences(tag)) {
