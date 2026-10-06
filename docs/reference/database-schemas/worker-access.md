@@ -862,6 +862,15 @@ retain native transactions and yielding writer admission. Arbitrary async plugin
 updaters retain their existing nested-admission behavior. Schemas, durability,
 public callback contracts, and update behavior are unchanged.
 
+First-turn diff-baseline claims and settlement, reply skill snapshots, and child
+agent admission and bookkeeping use that same entry writer. Preparation retains
+the selected physical store; the transaction rereads its entry and same-store
+source predicates before writing. Spawn and operator wrappers preserve prepared
+source authority through admission and commit, including parent/child linkage.
+The existing FIFO joins accepted writes and publishes acknowledged facts before
+release. Opaque SDK guards and cross-store sources retain their documented native
+contracts. No schema, retention, durability, or update migration is required.
+
 Embedded writer claims, live-model-switch consolidation, and pending-final delivery
 preparation, settlement, and cleanup explicitly select that worker patch path.
 Their reducers prepare outside the transaction; the worker rereads the selected
@@ -1657,6 +1666,12 @@ reads remain separate migration work; the released synchronous placement SDK
 contract is unchanged. No schema, retention,
 durability, or update change is required.
 
+Environment reconciliation reads only its exact placement owner through the
+shared-state worker and existing environment index. Each queued environment takes
+a current read and rejects duplicate owners before provider inspection; idle
+passes no longer materialize the full placement projection for every environment.
+Schemas, stored bytes, and update behavior are unchanged.
+
 Session maintenance prepares placement preservation through the shared-state
 reader before lifecycle or entry-replacement worker admission. A scan-wide
 observation from the placement authority owner fences newly created placements,
@@ -2373,6 +2388,43 @@ Recording a cron result selects the matching run ID inside the existing write
 transaction before decoding history. Store partition checks, released-row
 fallbacks, and first-terminal-result protection still apply; unrelated runs are
 not materialized while the writer lock is held.
+
+Subagent registry readers prepare durable facts through the existing shared-state
+worker. Cold child and replay queries select compact facts before
+hydrating the records they need; synchronous admission calculations consume those
+prepared facts instead of opening SQLite. Cancellation selects current live owners
+and holds their queued launches before awaiting session facts or worker-backed
+descendant discovery. Maintenance captures durable protection
+before entering native transactions, including native lifecycle and replacement
+paths. Committed publications retain their existing source and revision fences.
+Native maintenance retains a private live read-only connection and samples its
+`PRAGMA data_version` before the worker snapshot. Immediately before changing
+selected sessions, it checks that same unpinned connection again. A foreign
+commit triggers indexed child-session protection reads in batches of 64 selected
+keys; unchanged sources reuse the prepared facts. Newly protected candidates
+refuse the transaction, including its companion callbacks, while unrelated
+shared-state writes do not prevent pruning. The reader retains the original
+physical source and schema admission through cleanup; existing-schema integrity
+proof comes from the worker and never falls back to a native integrity scan.
+
+Initial registry restoration streams one read-only SQLite transaction through the
+existing read worker, in batches bounded to 128 rows and 1 MiB of stored payload;
+one oversized record remains whole. The worker waits for each host acknowledgment
+before reading another batch. Ordinary startup no longer copies the shared database
+or reopens a reader for each batch. Artifact-preserving scopes retain their existing
+snapshot owner. Quarantine and schema admission precede the read; the host rechecks
+live source authority before accepting each batch. Cancellation joins reader cleanup
+and discards partial results. The host installs the complete decoded registry and
+physical row versions only after the read settles, preserving creation order and
+refusing unreadable canonical rows. Hydration still precedes Gateway readiness;
+activation and recovery remain post-ready.
+Session-list facts are prepared with each immutable row and reused at publication.
+A replacement row owns new facts; the cache does not retain retired rows.
+Completion acknowledgments also carry decoded records and worker-computed physical
+versions; the host does not parse or hash the retained JSON again. Transaction and
+commit authority, terminal-event
+atomicity, uncertain-write recovery, schemas, retention, and update behavior are
+unchanged. No migration or configuration change is required.
 
 Cron execution, descendant follow-up, and delivery observations use the existing
 subagent registry worker snapshot. Descendant closure selection and the existing
