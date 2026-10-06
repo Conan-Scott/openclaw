@@ -1,13 +1,25 @@
 // Tests Dockerfile metadata and expected install commands.
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { access, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  access,
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BUNDLED_PLUGIN_ROOT_DIR } from "openclaw/plugin-sdk/test-fixtures";
 import { describe, expect, it } from "vitest";
 import { collectPackageDistImportErrors } from "../scripts/lib/package-dist-imports.mjs";
+import { assertArtifactTreeReadable } from "./shared/artifact-permissions.js";
 import { resolveTestNodeExecPath } from "./test-utils/node-process.js";
 
 const repoRoot = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
@@ -460,7 +472,7 @@ describe("Dockerfile", () => {
         runtime.indexOf(buildCopy?.[0] ?? ""),
       );
 
-      const fixture = await mkdtemp(join(tmpdir(), "openclaw-docker-deps-"));
+      const fixture = await realpath(await mkdtemp(join(tmpdir(), "openclaw-docker-deps-")));
       try {
         const app = join(fixture, "app");
         const build = join(fixture, "build");
@@ -500,6 +512,67 @@ describe("Dockerfile", () => {
         });
         await mkdir(join(app, "node_modules/@openclaw"), { recursive: true });
         await symlink("../../packages/ai", join(app, "node_modules/@openclaw/ai"));
+        const aiManifest = JSON.parse(
+          await readFile(join(repoRoot, "packages/ai/package.json"), "utf8"),
+        ) as {
+          dependencies: Record<string, string>;
+        };
+        const sdkNames = Object.keys(aiManifest.dependencies);
+        const aiDir = join(app, "packages/ai");
+        await writeFile(
+          join(aiDir, "package.json"),
+          JSON.stringify({
+            name: "@openclaw/ai",
+            main: "./dist/runtime-test.cjs",
+            dependencies: aiManifest.dependencies,
+          }),
+        );
+        await writeFile(
+          join(build, "packages/ai/dist/runtime-test.cjs"),
+          `module.exports = Object.fromEntries(${JSON.stringify(sdkNames)}.map(name => [name, require(name)]));\n`,
+        );
+        const transitive = join(
+          app,
+          "node_modules/.pnpm/sdk-transitive@1.0.0/node_modules/sdk-transitive",
+        );
+        await mkdir(transitive, { recursive: true });
+        await writeFile(
+          join(transitive, "package.json"),
+          JSON.stringify({ name: "sdk-transitive", main: "./index.cjs" }),
+        );
+        await writeFile(join(transitive, "index.cjs"), 'module.exports = "runtime-transitive";\n');
+        for (const name of sdkNames) {
+          const importerModules = join(
+            app,
+            "node_modules/.pnpm",
+            `${name.replaceAll("/", "+")}@1.0.0`,
+            "node_modules",
+          );
+          const owner = join(importerModules, name);
+          await mkdir(owner, { recursive: true });
+          await writeFile(
+            join(owner, "package.json"),
+            JSON.stringify({
+              name,
+              main: "./index.cjs",
+              dependencies: { "sdk-transitive": "1.0.0" },
+            }),
+          );
+          await writeFile(
+            join(owner, "index.cjs"),
+            'module.exports = require("sdk-transitive");\n',
+          );
+          const sdkLink = join(aiDir, "node_modules", name);
+          await mkdir(dirname(sdkLink), { recursive: true });
+          await symlink(posix.relative(dirname(sdkLink), owner), sdkLink);
+          await symlink(
+            posix.relative(importerModules, transitive),
+            join(importerModules, "sdk-transitive"),
+          );
+        }
+        const aggregateAi = join(app, "node_modules/.pnpm/node_modules/@openclaw/ai");
+        await mkdir(dirname(aggregateAi), { recursive: true });
+        await symlink(posix.relative(dirname(aggregateAi), aiDir), aggregateAi);
         await cp(build, app, { recursive: true, verbatimSymlinks: true });
         for (const file of oldFiles) {
           await expect(access(join(app, file))).rejects.toThrow();
@@ -513,6 +586,64 @@ describe("Dockerfile", () => {
         expect(JSON.parse(await readFile(join(app, "package.json"), "utf8"))).toEqual({
           version: "2026.8.1-1",
         });
+        // Exercise any Docker-owned workspace relocation before the final COPY
+        // projection. The former cp -a recipe moved pnpm's importer-relative links
+        // to a different depth even though their SDK payloads remained installed.
+        const materializeAi = runtime.match(
+          /if \[ -L \/app\/node_modules\/@openclaw\/ai \]; then[\s\S]*?;\s*fi/u,
+        )?.[0];
+        if (materializeAi) {
+          execFileSync(
+            "/bin/sh",
+            ["-eu", "-c", materializeAi.replaceAll("/app/", '"$OPENCLAW_TEST_APP"/')],
+            { env: { ...process.env, OPENCLAW_TEST_APP: app } },
+          );
+        }
+        const image = join(fixture, "image");
+        await mkdir(image);
+        const finalStage = dockerfile.slice(dockerfile.lastIndexOf("\nFROM "));
+        const copies = [
+          ...finalStage.matchAll(
+            /^COPY --from=runtime-assets --chown=node:node \/app\/(\S+) (\S+)$/gmu,
+          ),
+        ];
+        for (const [, source, target] of copies) {
+          if (!source || !target) {
+            throw new Error("Docker runtime COPY must have a source and destination");
+          }
+          const sourcePath = source.replace("${OPENCLAW_BUNDLED_PLUGIN_DIR}", bundledPluginDir);
+          const targetPath = target.replace("${OPENCLAW_BUNDLED_PLUGIN_DIR}", bundledPluginDir);
+          try {
+            await access(join(app, sourcePath));
+          } catch (error) {
+            if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+              continue;
+            }
+            throw error;
+          }
+          await cp(
+            join(app, sourcePath),
+            join(image, targetPath === "." ? basename(sourcePath) : targetPath),
+            {
+              recursive: true,
+              verbatimSymlinks: true,
+              filter: () => true,
+            },
+          );
+        }
+        const requireFromImage = createRequire(join(image, "package.json"));
+        expect(requireFromImage("@openclaw/ai")).toEqual(
+          Object.fromEntries(sdkNames.map((name) => [name, "runtime-transitive"])),
+        );
+        expect(await realpath(join(image, "node_modules/@openclaw/ai"))).toBe(
+          await realpath(join(image, "node_modules/.pnpm/node_modules/@openclaw/ai")),
+        );
+        expect(() =>
+          assertArtifactTreeReadable(join(image, "node_modules"), {
+            allowLinksWithin: image,
+            readFiles: true,
+          }),
+        ).not.toThrow();
       } finally {
         await rm(fixture, { recursive: true, force: true });
       }
