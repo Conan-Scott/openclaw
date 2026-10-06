@@ -280,6 +280,9 @@ RUN chown node:node /app
 
 COPY --from=runtime-assets --chown=node:node /app/dist ./dist
 COPY --from=runtime-assets --chown=node:node /app/node_modules ./node_modules
+# Production workspace links retain their importer-relative targets. Some contracts
+# export source files, so compiled dist alone is not the complete runtime payload.
+COPY --from=runtime-assets --chown=node:node /app/packages ./packages
 COPY --from=runtime-assets --chown=node:node /app/package.json .
 COPY --from=runtime-assets --chown=node:node /app/pnpm-lock.yaml .
 COPY --from=runtime-assets --chown=node:node /app/pnpm-workspace.yaml .

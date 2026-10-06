@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   parseDockerPluginKeepList,
@@ -277,6 +278,148 @@ describe("pruneDockerPluginDist", () => {
       fs.existsSync(path.join(repoRoot, "dist", "extensions", "internal", "node_modules")),
     ).toBe(false);
   });
+
+  // Docker uses relocatable POSIX links; Windows staging intentionally uses absolute junctions.
+  it.skipIf(process.platform === "win32")(
+    "retains selected plugin workspace dependencies in the final Docker image projection",
+    () => {
+      const repoRoot = fs.realpathSync(makeRepoRoot("openclaw-docker-workspace-runtime-"));
+      writeJsonFile(path.join(repoRoot, "package.json"), {
+        files: ["dist/**", "!dist/extensions/workboard/**", "!dist/extensions/omitted/**"],
+      });
+      const linkPackage = (importer: string, name: string, target: string) => {
+        const link = path.join(importer, "node_modules", ...name.split("/"));
+        fs.mkdirSync(path.dirname(link), { recursive: true });
+        fs.symlinkSync(path.relative(path.dirname(link), target), link, "dir");
+      };
+      const protocolDir = path.join(repoRoot, "packages", "gateway-protocol");
+      const contractDir = path.join(repoRoot, "packages", "workboard-contract");
+      writeJsonFile(path.join(protocolDir, "package.json"), {
+        name: "@openclaw/gateway-protocol",
+        exports: "./dist/index.cjs",
+        dependencies: { typebox: "1.0.0" },
+        devDependencies: { "dev-only": "1.0.0" },
+      });
+      writeJsonFile(path.join(contractDir, "package.json"), {
+        name: "@openclaw/workboard-contract",
+        exports: "./src/index.cjs",
+        dependencies: { "@openclaw/gateway-protocol": "workspace:*" },
+      });
+      fs.mkdirSync(path.join(protocolDir, "dist"));
+      fs.writeFileSync(
+        path.join(protocolDir, "dist/index.cjs"),
+        'module.exports = require("typebox");\n',
+      );
+      fs.mkdirSync(path.join(contractDir, "src"));
+      fs.writeFileSync(
+        path.join(contractDir, "src/index.cjs"),
+        'module.exports = require("@openclaw/gateway-protocol");\n',
+      );
+      const storeRoot = path.join(repoRoot, "node_modules", ".pnpm");
+      const dependencyOwners = new Map<string, string>();
+      for (const name of ["typebox", "plugin-only", "sibling-only"]) {
+        const importer = path.join(storeRoot, `${name}@1.0.0`);
+        writeNodePackage(repoRoot, name, {}, importer);
+        const owner = path.join(importer, "node_modules", name);
+        fs.writeFileSync(
+          path.join(owner, "index.js"),
+          `module.exports = ${JSON.stringify(name)};\n`,
+        );
+        dependencyOwners.set(name, owner);
+      }
+      linkPackage(protocolDir, "typebox", dependencyOwners.get("typebox")!);
+      linkPackage(contractDir, "@openclaw/gateway-protocol", protocolDir);
+      const workboardDir = path.join(repoRoot, "extensions", "workboard");
+      writeJsonFile(path.join(workboardDir, "package.json"), {
+        name: "@openclaw/workboard",
+        dependencies: {
+          "@openclaw/gateway-protocol": "workspace:*",
+          "@openclaw/workboard-contract": "workspace:*",
+          "plugin-only": "1.0.0",
+        },
+      });
+      linkPackage(workboardDir, "@openclaw/gateway-protocol", protocolDir);
+      linkPackage(workboardDir, "@openclaw/workboard-contract", contractDir);
+      linkPackage(workboardDir, "plugin-only", dependencyOwners.get("plugin-only")!);
+      const pluginEntry =
+        'module.exports = { protocol: require("@openclaw/gateway-protocol"), contract: require("@openclaw/workboard-contract"), ordinary: require("plugin-only") };\n';
+      fs.writeFileSync(path.join(workboardDir, "index.cjs"), pluginEntry);
+      writeDistPluginFile(repoRoot, "dist", "workboard");
+      fs.writeFileSync(path.join(repoRoot, "dist/extensions/workboard/index.cjs"), pluginEntry);
+      const siblingDir = path.join(repoRoot, "extensions", "sibling");
+      writeJsonFile(path.join(siblingDir, "package.json"), {
+        name: "@openclaw/sibling",
+        dependencies: { "sibling-only": "1.0.0" },
+      });
+      linkPackage(siblingDir, "sibling-only", dependencyOwners.get("sibling-only")!);
+      writePluginSourcePackage(repoRoot, "omitted");
+      writeDistPluginFile(repoRoot, "dist", "omitted");
+
+      pruneDockerPluginDist({ repoRoot, env: { OPENCLAW_EXTENSIONS: "workboard" } });
+
+      const dockerfile = fs.readFileSync(
+        fileURLToPath(new URL("../../Dockerfile", import.meta.url)),
+        "utf8",
+      );
+      // Only the final stage's literal runtime-assets COPY operations project the image;
+      // earlier stages intentionally contain all workspaces and cannot prove retention.
+      const finalStage = dockerfile.slice(dockerfile.lastIndexOf("\nFROM "));
+      const copies = [
+        ...finalStage.matchAll(
+          /^COPY --from=runtime-assets --chown=node:node \/app\/(\S+) (\S+)$/gmu,
+        ),
+      ].map(([, source, target]) => ({
+        source: source.replace("${OPENCLAW_BUNDLED_PLUGIN_DIR}", "extensions"),
+        target: target.replace("${OPENCLAW_BUNDLED_PLUGIN_DIR}", "extensions"),
+      }));
+      expect(copies.map(({ source }) => source)).toEqual(
+        expect.arrayContaining(["dist", "node_modules", "extensions"]),
+      );
+      const project = (includeWorkspaces: boolean) => {
+        const imageRoot = fs.realpathSync(makeRepoRoot("openclaw-docker-final-projection-"));
+        for (const { source, target } of copies) {
+          const sourcePath = path.join(repoRoot, source);
+          if ((!includeWorkspaces && source === "packages") || !fs.existsSync(sourcePath)) {
+            continue;
+          }
+          const destination = path.join(imageRoot, target === "." ? path.basename(source) : target);
+          // Keep pnpm's relative links relocatable; the filter also keeps copied
+          // executable fixture files on libuv's close-on-exec copy path.
+          fs.cpSync(sourcePath, destination, {
+            recursive: true,
+            verbatimSymlinks: true,
+            filter: () => true,
+          });
+        }
+        return imageRoot;
+      };
+      const legacyImage = project(false);
+      const image = project(true);
+      for (const pluginPath of ["extensions/workboard", "dist/extensions/workboard"]) {
+        const legacyRequire = createRequire(path.join(legacyImage, pluginPath, "package.json"));
+        expect(() => legacyRequire("./index.cjs")).toThrow(/Cannot find module/u);
+        const pluginRequire = createRequire(path.join(image, pluginPath, "package.json"));
+        expect(pluginRequire("./index.cjs")).toEqual({
+          protocol: "typebox",
+          contract: "typebox",
+          ordinary: "plugin-only",
+        });
+        for (const [name, owner] of [
+          ["@openclaw/gateway-protocol", "packages/gateway-protocol/dist/index.cjs"],
+          ["@openclaw/workboard-contract", "packages/workboard-contract/src/index.cjs"],
+        ]) {
+          expect(pluginRequire.resolve(name)).toBe(path.join(image, owner));
+        }
+      }
+      const siblingRequire = createRequire(path.join(image, "extensions/sibling/package.json"));
+      expect(siblingRequire("sibling-only")).toBe("sibling-only");
+      expect(fs.existsSync(path.join(image, "extensions/omitted"))).toBe(false);
+      expect(fs.existsSync(path.join(image, "dist/extensions/omitted"))).toBe(false);
+      expect(
+        fs.existsSync(path.join(image, "packages/gateway-protocol/node_modules/dev-only")),
+      ).toBe(false);
+    },
+  );
 
   it("fails closed when a retained plugin dependency stays unreachable from its packaged root", () => {
     const repoRoot = makeRepoRoot("openclaw-docker-plugin-dist-unreachable-");
