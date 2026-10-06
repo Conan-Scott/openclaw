@@ -10606,7 +10606,8 @@ describe("package artifact reuse", () => {
       "Checkout trusted artifact harness",
     );
     expect(repoE2eHarnessCheckout.with).toMatchObject({
-      "sparse-checkout": "/package.json\n/scripts/\n/src/shared/non-packaged-plugin-dirs.ts\n",
+      "sparse-checkout":
+        "/package.json\n/scripts/\n/src/shared/artifact-permissions.ts\n/src/shared/non-packaged-plugin-dirs.ts\n",
       "sparse-checkout-cone-mode": false,
     });
     expect(workflow).toContain("suite_id: native-live-src-gateway-core");
