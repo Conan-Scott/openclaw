@@ -368,10 +368,15 @@ describe("pruneDockerPluginDist", () => {
         ...finalStage.matchAll(
           /^COPY --from=runtime-assets --chown=node:node \/app\/(\S+) (\S+)$/gmu,
         ),
-      ].map(([, source, target]) => ({
-        source: source.replace("${OPENCLAW_BUNDLED_PLUGIN_DIR}", "extensions"),
-        target: target.replace("${OPENCLAW_BUNDLED_PLUGIN_DIR}", "extensions"),
-      }));
+      ].map(([, source, target]) => {
+        if (!source || !target) {
+          throw new Error("Docker runtime COPY must have a source and destination");
+        }
+        return {
+          source: source.replace("${OPENCLAW_BUNDLED_PLUGIN_DIR}", "extensions"),
+          target: target.replace("${OPENCLAW_BUNDLED_PLUGIN_DIR}", "extensions"),
+        };
+      });
       expect(copies.map(({ source }) => source)).toEqual(
         expect.arrayContaining(["dist", "node_modules", "extensions"]),
       );
@@ -404,10 +409,11 @@ describe("pruneDockerPluginDist", () => {
           contract: "typebox",
           ordinary: "plugin-only",
         });
-        for (const [name, owner] of [
+        const workspaceExports = [
           ["@openclaw/gateway-protocol", "packages/gateway-protocol/dist/index.cjs"],
           ["@openclaw/workboard-contract", "packages/workboard-contract/src/index.cjs"],
-        ]) {
+        ] as const;
+        for (const [name, owner] of workspaceExports) {
           expect(pluginRequire.resolve(name)).toBe(path.join(image, owner));
         }
       }
