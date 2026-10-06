@@ -202,6 +202,8 @@ COPY --from=runtime-build-output /app/ ./
 # plugin-local dependencies under dist/extensions/<id> after package lifecycle
 # cleanup so the packaged roots keep them. Keep SDK-native binaries only for
 # selected plugins that explicitly require them.
+# pnpm's generated workspace state is part of the public installation payload,
+# not operator configuration; normalize only that metadata before runtime COPY.
 RUN node scripts/postinstall-bundled-plugins.mjs && \
     OPENCLAW_EXTENSIONS="$(cat /tmp/openclaw-selected-plugin-dirs)" OPENCLAW_BUNDLED_PLUGIN_DIR="$OPENCLAW_BUNDLED_PLUGIN_DIR" node scripts/prune-docker-plugin-dist.mjs && \
     find dist -type f \( -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o -name '*.map' \) -delete && \
@@ -213,6 +215,7 @@ RUN node scripts/postinstall-bundled-plugins.mjs && \
       find /app/node_modules/@anthropic-ai -maxdepth 1 -type d \
         -name 'claude-agent-sdk-linux-*' -exec rm -rf {} +; \
     fi && \
+    node --input-type=module -e 'import { normalizeGeneratedArtifactTree } from "./src/shared/artifact-permissions.ts"; normalizeGeneratedArtifactTree("node_modules/.pnpm-workspace-state-v1.json", { preserveExecutable: false });' && \
     node --input-type=module -e 'await import("grammy")' && \
     node scripts/check-package-dist-imports.mjs /app && \
     node scripts/docker/copy-bootstrap-scripts.mjs /app/.runtime-bootstrap

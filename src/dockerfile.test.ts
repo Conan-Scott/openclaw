@@ -3,12 +3,14 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import {
   access,
+  chmod,
   cp,
   mkdir,
   mkdtemp,
   readFile,
   realpath,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -491,6 +493,7 @@ describe("Dockerfile", () => {
         const prodFiles = [
           "node_modules/native-addon/addon.node",
           "node_modules/.modules.yaml",
+          "node_modules/.pnpm-workspace-state-v1.json",
           "packages/ai/node_modules/runtime-dep/index.js",
           `${bundledPluginDir}/selected/node_modules/runtime-dep/index.js`,
           "pnpm-lock.yaml",
@@ -505,6 +508,10 @@ describe("Dockerfile", () => {
           }
         }
         await writeFile(join(app, "package.json"), JSON.stringify({ version: "2026.8.1" }));
+        const workspaceState = join(app, "node_modules/.pnpm-workspace-state-v1.json");
+        await chmod(workspaceState, 0o600);
+        const privateSource = join(app, ".npmrc");
+        await writeFile(privateSource, "private-install-settings", { mode: 0o600 });
         await writeFile(join(build, "package.json"), JSON.stringify({ version: "2026.8.1-1" }));
         execFileSync("/bin/sh", ["-eu", "-c", cleanCommand], {
           cwd: build,
@@ -574,6 +581,25 @@ describe("Dockerfile", () => {
         await mkdir(dirname(aggregateAi), { recursive: true });
         await symlink(posix.relative(dirname(aggregateAi), aiDir), aggregateAi);
         await cp(build, app, { recursive: true, verbatimSymlinks: true });
+        // pnpm writes its installation metadata as 0600. Execute the actual
+        // staging owner before projection; old Dockerfiles leave it unreadable.
+        const normalizeMetadata = runtime.match(
+          /node --input-type=module -e '([^']*normalizeGeneratedArtifactTree[^']*)'/u,
+        )?.[1];
+        if (normalizeMetadata) {
+          const permissionOwner = "src/shared/artifact-permissions.ts";
+          await mkdir(dirname(join(app, permissionOwner)), { recursive: true });
+          await cp(join(repoRoot, permissionOwner), join(app, permissionOwner));
+          execFileSync(
+            resolveTestNodeExecPath(),
+            ["--input-type=module", "-e", normalizeMetadata],
+            {
+              cwd: app,
+            },
+          );
+        }
+        expect((await stat(privateSource)).mode & 0o777).toBe(0o600);
+        expect(await readFile(privateSource, "utf8")).toBe("private-install-settings");
         for (const file of oldFiles) {
           await expect(access(join(app, file))).rejects.toThrow();
         }
