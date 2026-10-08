@@ -5,7 +5,9 @@ import { replaceFileAtomic } from "@openclaw/fs-safe/atomic";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import {
   CONTROL_UI_PLUGIN_MAX_ASSET_BYTES,
+  CONTROL_UI_PLUGIN_MAX_ASSETS,
   CONTROL_UI_PLUGIN_MAX_BUILD_BYTES,
+  isPluginControlUiAssetPath,
 } from "../plugins/control-ui-assets.js";
 import type { PluginManifestControlUi } from "../plugins/manifest-types.js";
 import { PLUGIN_MANIFEST_FILENAME } from "../plugins/manifest.js";
@@ -47,10 +49,13 @@ export async function buildPluginControlUi(params: {
   if (relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative)) {
     throw new Error("Control UI source must stay inside the plugin package.");
   }
-  const files = await buildPluginBundle({
+  const buildDir = path.join(rootDir, "dist/control-ui/build");
+  const outputs = await buildPluginBundle({
     absWorkingDir: rootDir,
     entryPoints: { index: entry },
-    outdir: path.join(rootDir, "dist/control-ui/build"),
+    outdir: buildDir,
+    splitting: true,
+    chunkNames: "chunk-[hash]",
     platform: "browser",
     target: "es2022",
     minify: true,
@@ -65,6 +70,13 @@ export async function buildPluginControlUi(params: {
     // bytes change the content hash that openclaw.plugin.json commits.
     alias: buildPluginLoaderAliasMap(entry, process.argv[1], import.meta.url, "src"),
   });
+  const files = outputs.map((file) => ({
+    name: path.relative(buildDir, file.path),
+    contents: file.contents,
+  }));
+  if (files.length > CONTROL_UI_PLUGIN_MAX_ASSETS) {
+    throw new Error(`Control UI builds allow at most ${CONTROL_UI_PLUGIN_MAX_ASSETS} assets.`);
+  }
   if (
     files.some((file) => file.contents.length > CONTROL_UI_PLUGIN_MAX_ASSET_BYTES) ||
     files.reduce((total, file) => total + file.contents.length, 0) >
@@ -75,37 +87,35 @@ export async function buildPluginControlUi(params: {
     );
   }
   if (
-    !files.some((file) => path.basename(file.path) === "index.js") ||
-    files.some((file) => !["index.js", "index.css"].includes(path.basename(file.path)))
+    !files.some((file) => file.name === "index.js") ||
+    files.some(
+      (file) => file.name !== path.basename(file.name) || !isPluginControlUiAssetPath(file.name),
+    )
   ) {
     throw new Error(
-      "Control UI build must produce a JavaScript entrypoint and optional stylesheet.",
+      "Control UI build must produce a JavaScript entrypoint and only flat JavaScript/CSS assets.",
     );
   }
   const hash = createHash("sha256");
   for (const file of files) {
-    hash.update(`${path.basename(file.path)}\0${file.contents.length}\0`).update(file.contents);
+    hash.update(`${file.name}\0${file.contents.length}\0`).update(file.contents);
   }
   const output = `dist/control-ui/${hash.digest("hex")}`;
   const outputDir = path.join(rootDir, output);
   const declaration = {
     entry: `${output}/index.js`,
-    ...(files.some((file) => file.path.endsWith(".css"))
-      ? { styles: [`${output}/index.css`] }
-      : {}),
+    ...(files.some((file) => file.name === "index.css") ? { styles: [`${output}/index.css`] } : {}),
   };
   if (params.check) {
     for (const file of files) {
-      const existing = await fs
-        .readFile(path.join(outputDir, path.basename(file.path)))
-        .catch(() => null);
+      const existing = await fs.readFile(path.join(outputDir, file.name)).catch(() => null);
       if (!existing?.equals(Buffer.from(file.contents))) {
         throw new Error("Control UI build is missing or stale. Run openclaw plugins build.");
       }
     }
     if (
       JSON.stringify((await fs.readdir(outputDir)).toSorted()) !==
-      JSON.stringify(files.map((file) => path.basename(file.path)).toSorted())
+      JSON.stringify(files.map((file) => file.name).toSorted())
     ) {
       throw new Error(
         "An immutable Control UI build has unexpected entries. Remove it and rebuild.",
@@ -122,7 +132,7 @@ export async function buildPluginControlUi(params: {
   const staging = await fs.mkdtemp(path.join(generations, ".build-"));
   try {
     for (const file of files) {
-      await fs.writeFile(path.join(staging, path.basename(file.path)), file.contents);
+      await fs.writeFile(path.join(staging, file.name), file.contents);
     }
     normalizeGeneratedArtifactTree(staging, { preserveExecutable: false });
     try {
@@ -136,7 +146,7 @@ export async function buildPluginControlUi(params: {
         throw error;
       }
       for (const file of files) {
-        const existing = await fs.readFile(path.join(outputDir, path.basename(file.path)));
+        const existing = await fs.readFile(path.join(outputDir, file.name));
         if (!existing.equals(Buffer.from(file.contents))) {
           throw new Error(
             "An immutable Control UI build was modified. Remove that build and rebuild.",
@@ -144,7 +154,7 @@ export async function buildPluginControlUi(params: {
           );
         }
       }
-      const expectedNames = files.map((file) => path.basename(file.path)).toSorted();
+      const expectedNames = files.map((file) => file.name).toSorted();
       if (
         JSON.stringify((await fs.readdir(outputDir)).toSorted()) !== JSON.stringify(expectedNames)
       ) {

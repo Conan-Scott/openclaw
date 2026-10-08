@@ -22,6 +22,7 @@ import {
   isToolAuthorityReadCaptureActive,
   prepareReplyToolAuthorityCallerRead,
   recordPreparedToolAuthorityRead,
+  type PreparedQuestionCallerRead,
 } from "../../agents/harness/host-private-capabilities.js";
 import { readOperatorModelPolicyMembership } from "../../agents/operator-model-policy.js";
 import {
@@ -38,7 +39,6 @@ import { captureRuntimeConfig } from "../../config/runtime-source-projection.js"
 import type { SessionEntry } from "../../config/sessions.js";
 import { resolveGroupSessionKey } from "../../config/sessions/group.js";
 import { withSessionEntriesFromStoresInWorker } from "../../config/sessions/session-entry-read-runtime.js";
-import type { PreparedSessionEntryWorkerRead } from "../../config/sessions/session-entry-read-runtime.types.js";
 import {
   prepareGatewaySessionEntryReadOnlyInWorker,
   type GatewaySessionEntryReadPlan,
@@ -481,6 +481,10 @@ export function prepareReplyToolAuthority(
       memberRoleIds: run.run.memberRoleIds ? [...run.run.memberRoleIds] : undefined,
     },
   };
+  const projectInput = (overlay?: ReplyToolAuthorityOverlay) => {
+    const incoming = overlay ? applyReplyToolAuthorityOverlay(snapshot, overlay) : snapshot;
+    return narrow ? narrow(incoming) : incoming;
+  };
   const env = { ...process.env };
   const cwd = process.cwd();
   let captured:
@@ -500,6 +504,18 @@ export function prepareReplyToolAuthority(
       }
     | undefined;
   let capturedReadPlan: GatewaySessionEntryReadPlan | undefined;
+  const assertClassificationSession = (
+    entry: SessionEntry | undefined,
+    expected: typeof captured,
+  ) => {
+    if (
+      expected &&
+      (entry?.sessionId !== expected.sessionId ||
+        entry?.lifecycleRevision !== expected.lifecycleRevision)
+    ) {
+      throw new Error("Tool authority classification session changed");
+    }
+  };
   const prepare = async (input: ReplyToolAuthorityInput, route?: ReplyToolAuthorityRoute) => {
     const assertCurrent = () => {
       assertCurrentOperatorAuthority(snapshot.operatorAuthority);
@@ -550,15 +566,7 @@ export function prepareReplyToolAuthority(
         env,
         cwd,
         readSource: captured?.source,
-        assertEntryCurrent: (entry) => {
-          if (
-            captured &&
-            (entry?.sessionId !== captured.sessionId ||
-              entry?.lifecycleRevision !== captured.lifecycleRevision)
-          ) {
-            throw new Error("Tool authority classification session changed");
-          }
-        },
+        assertEntryCurrent: (entry) => assertClassificationSession(entry, captured),
       },
     );
   };
@@ -574,19 +582,13 @@ export function prepareReplyToolAuthority(
       resolveFollowupRunToolAuthorityFingerprint(snapshot, route),
     fingerprintAsync: (route?: ReplyToolAuthorityRoute) => prepare(snapshot, route),
     projectAsync: async (overlay: ReplyToolAuthorityOverlay, route: ReplyToolAuthorityRoute) => {
-      const assertCurrent = () => assertCurrentOperatorAuthority(snapshot.operatorAuthority);
-      assertCurrent();
-      const incoming = applyReplyToolAuthorityOverlay(snapshot, overlay);
-      return prepare(narrow ? narrow(incoming) : incoming, route);
+      assertCurrentOperatorAuthority(snapshot.operatorAuthority);
+      return prepare(projectInput(overlay), route);
     },
     project: (overlay: ReplyToolAuthorityOverlay, route: ReplyToolAuthorityRoute) => {
       // Steering retains the running turn's authority and browser bindings across reconnects.
       assertCurrentOperatorAuthority(snapshot.operatorAuthority);
-      const incoming = applyReplyToolAuthorityOverlay(snapshot, overlay);
-      return resolveFollowupRunToolAuthorityFingerprint(
-        narrow ? narrow(incoming) : incoming,
-        route,
-      );
+      return resolveFollowupRunToolAuthorityFingerprint(projectInput(overlay), route);
     },
   };
   bindReplyToolAuthorityCallerRead(
@@ -609,8 +611,7 @@ export function prepareReplyToolAuthority(
       await prepare(snapshot, route);
       assertActive();
       const original = captured;
-      const incoming = caller ? applyReplyToolAuthorityOverlay(snapshot, caller) : snapshot;
-      const projected = narrow ? narrow(incoming) : incoming;
+      const projected = projectInput(caller);
       const plan = capturedReadPlan;
       if (original && !plan) {
         throw new Error("Tool authority classification source is unavailable");
@@ -621,13 +622,7 @@ export function prepareReplyToolAuthority(
       };
       const assertEntry = (entry: SessionEntry | undefined) => {
         assertSources();
-        if (
-          original &&
-          (entry?.sessionId !== original.sessionId ||
-            entry?.lifecycleRevision !== original.lifecycleRevision)
-        ) {
-          throw new Error("Tool authority classification session changed");
-        }
+        assertClassificationSession(entry, original);
         const sandbox = resolveSandboxRuntimeStatus({
           cfg: snapshot.run.config,
           agentId: snapshot.run.agentId,
@@ -649,23 +644,37 @@ export function prepareReplyToolAuthority(
         assertSources();
       };
       const reads = plan?.reads ?? [];
-      const assertPrepared = (currentReads: readonly PreparedSessionEntryWorkerRead[]) => {
+      const assertPrepared: PreparedQuestionCallerRead["assertPrepared"] = (currentReads) => {
         assertSources();
         assertEntry(plan?.selectPrepared(currentReads));
       };
-      recordPreparedToolAuthorityRead({
+      const prepared: PreparedQuestionCallerRead = {
         reads,
         assertPrepared,
+        prepareCurrent: () => withSessionEntriesFromStoresInWorker(reads, assertPrepared),
+        retainNative() {
+          assertSources();
+          // Secret writes retain their pre-existing other-owner check at both worker grants.
+          const retained = plan?.retainNative();
+          if (!retained) {
+            return { assertCurrent: () => assertEntry(undefined), release: () => {} };
+          }
+          const assertCurrent = () => {
+            assertSources();
+            assertEntry(retained.readCurrent());
+          };
+          // Consumers validate policy at the effect boundary; retention only pins the reader.
+          return { assertCurrent, release: retained.release };
+        },
+      };
+      recordPreparedToolAuthorityRead({
+        ...prepared,
         assertLegacyCurrent: () => {
           assertSources();
           assertEntry(plan?.readLegacy());
         },
       });
-      return {
-        prepareCurrent: async () => {
-          await withSessionEntriesFromStoresInWorker(reads, assertPrepared);
-        },
-      };
+      return prepared;
     },
   );
   return result;
