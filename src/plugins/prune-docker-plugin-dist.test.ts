@@ -10,7 +10,10 @@ import {
 } from "../../scripts/prune-docker-plugin-dist.mjs";
 import { cleanupTempDirs, makeTempDir as makeTempRepoRoot } from "../../test/helpers/temp-dir.js";
 import { writeJsonFile } from "../../test/helpers/temp-repo.js";
-import { assertArtifactTreeReadable } from "../shared/artifact-permissions.js";
+import {
+  assertArtifactTreeReadable,
+  normalizeGeneratedArtifactTree,
+} from "../shared/artifact-permissions.js";
 
 const tempDirs: string[] = [];
 
@@ -417,6 +420,9 @@ describe("pruneDockerPluginDist", () => {
             filter: () => true,
           });
         }
+        // The final image owns permission publication; this fixture exercises
+        // dependency reachability, not the invoking shell's umask.
+        normalizeGeneratedArtifactTree(imageRoot, { allowLinksWithin: imageRoot });
         return imageRoot;
       };
       const legacyImage = project(false);

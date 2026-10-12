@@ -445,6 +445,15 @@ function retainedExecutables(root: string): string[] {
   return unique(files);
 }
 
+/** Publish only the disposable final image projection, including declared launchers. */
+export function normalizeImageArtifactPermissions(rootDir = process.cwd()): void {
+  const root = path.resolve(rootDir);
+  normalizeGeneratedArtifactTree(root, {
+    allowLinksWithin: root,
+    executableFiles: retainedExecutables(root),
+  });
+}
+
 /** Read-only acceptance; a final image must not repair itself while being tested. */
 export function assertBuiltArtifactPermissions(params: CheckParams = {}) {
   const root = fs.realpathSync(params.rootDir ?? process.cwd());

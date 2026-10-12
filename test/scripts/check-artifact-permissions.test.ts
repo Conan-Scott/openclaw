@@ -10,6 +10,19 @@ import { createScriptTestHarness } from "./test-helpers.js";
 
 const { createTempDir } = createScriptTestHarness();
 const sha = "a".repeat(40);
+
+// Seed already-published fixture bytes explicitly; ambient umask is not the
+// contract under test. Individual cases then introduce their own invalid modes.
+function writePublicFixtureFile(root: string, file: string, content: string) {
+  const target = path.join(root, file);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  for (let directory = path.dirname(target); directory !== root; directory = path.dirname(directory)) {
+    fs.chmodSync(directory, 0o755);
+  }
+  fs.writeFileSync(target, content);
+  fs.chmodSync(target, 0o644);
+}
+
 function fixture() {
   const rootDir = createTempDir("openclaw-artifact-plan-");
   // Fixture artifacts start with distribution modes, independent of host setgid inheritance.
@@ -50,16 +63,13 @@ function fixture() {
     "dist/extensions/demo/assets/help.txt": "help\n",
   };
   for (const [file, bytes] of Object.entries(files)) {
-    const target = path.join(rootDir, file);
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, bytes);
+    writePublicFixtureFile(rootDir, file, bytes);
     if (file.startsWith("dist/extensions/")) {
-      const overlay = path.join(
+      writePublicFixtureFile(
         rootDir,
         file.replace(/^dist\/extensions\//u, "dist-runtime/extensions/"),
+        bytes,
       );
-      fs.mkdirSync(path.dirname(overlay), { recursive: true });
-      fs.writeFileSync(overlay, bytes);
     }
   }
   const env: NodeJS.ProcessEnv = {
@@ -192,11 +202,9 @@ describe("finished artifact acceptance", () => {
     }
     // Mounted proof needs exactly this zero-dependency runtime import closure.
     const checker = path.join(params.rootDir, "scripts/check-artifact-permissions.mts");
-    const helper = path.join(params.rootDir, "src/shared/artifact-permissions.ts");
-    fs.mkdirSync(path.dirname(checker), { recursive: true });
-    fs.mkdirSync(path.dirname(helper), { recursive: true });
-    fs.copyFileSync(path.join(process.cwd(), "scripts/check-artifact-permissions.mts"), checker);
-    fs.copyFileSync(path.join(process.cwd(), "src/shared/artifact-permissions.ts"), helper);
+    for (const file of ["scripts/check-artifact-permissions.mts", "src/shared/artifact-permissions.ts"]) {
+      writePublicFixtureFile(params.rootDir, file, fs.readFileSync(path.join(process.cwd(), file), "utf8"));
+    }
     fs.chmodSync(params.rootDir, 0o755);
     const output = execFileSync(
       process.execPath,
@@ -233,12 +241,12 @@ describe("finished artifact acceptance", () => {
     expect(() => assertBuiltArtifactPermissions({ ...params, image: true })).toThrow(/membership/u);
     fs.rmSync(extra, { recursive: true });
     const binary = path.join(params.rootDir, "node_modules/fixture/bin/run.js");
-    fs.mkdirSync(path.dirname(binary), { recursive: true });
-    fs.writeFileSync(
-      path.join(params.rootDir, "node_modules/fixture/package.json"),
+    writePublicFixtureFile(
+      params.rootDir,
+      "node_modules/fixture/package.json",
       '{"name":"fixture","bin":"bin/run.js"}',
     );
-    fs.writeFileSync(binary, "#!/usr/bin/env node\n", { mode: 0o644 });
+    writePublicFixtureFile(params.rootDir, "node_modules/fixture/bin/run.js", "#!/usr/bin/env node\n");
     if (process.platform !== "win32") {
       expect(() => assertBuiltArtifactPermissions({ ...params, image: true })).toThrow(
         /executable/u,
