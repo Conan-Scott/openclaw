@@ -16,7 +16,11 @@ const sha = "a".repeat(40);
 function writePublicFixtureFile(root: string, file: string, content: string) {
   const target = path.join(root, file);
   fs.mkdirSync(path.dirname(target), { recursive: true });
-  for (let directory = path.dirname(target); directory !== root; directory = path.dirname(directory)) {
+  for (
+    let directory = path.dirname(target);
+    directory !== root;
+    directory = path.dirname(directory)
+  ) {
     fs.chmodSync(directory, 0o755);
   }
   fs.writeFileSync(target, content);
@@ -202,8 +206,15 @@ describe("finished artifact acceptance", () => {
     }
     // Mounted proof needs exactly this zero-dependency runtime import closure.
     const checker = path.join(params.rootDir, "scripts/check-artifact-permissions.mts");
-    for (const file of ["scripts/check-artifact-permissions.mts", "src/shared/artifact-permissions.ts"]) {
-      writePublicFixtureFile(params.rootDir, file, fs.readFileSync(path.join(process.cwd(), file), "utf8"));
+    for (const file of [
+      "scripts/check-artifact-permissions.mts",
+      "src/shared/artifact-permissions.ts",
+    ]) {
+      writePublicFixtureFile(
+        params.rootDir,
+        file,
+        fs.readFileSync(path.join(process.cwd(), file), "utf8"),
+      );
     }
     fs.chmodSync(params.rootDir, 0o755);
     const output = execFileSync(
@@ -246,7 +257,11 @@ describe("finished artifact acceptance", () => {
       "node_modules/fixture/package.json",
       '{"name":"fixture","bin":"bin/run.js"}',
     );
-    writePublicFixtureFile(params.rootDir, "node_modules/fixture/bin/run.js", "#!/usr/bin/env node\n");
+    writePublicFixtureFile(
+      params.rootDir,
+      "node_modules/fixture/bin/run.js",
+      "#!/usr/bin/env node\n",
+    );
     if (process.platform !== "win32") {
       expect(() => assertBuiltArtifactPermissions({ ...params, image: true })).toThrow(
         /executable/u,

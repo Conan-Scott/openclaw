@@ -451,6 +451,7 @@ export function normalizeImageArtifactPermissions(rootDir = process.cwd()): void
   normalizeGeneratedArtifactTree(root, {
     allowLinksWithin: root,
     executableFiles: retainedExecutables(root),
+    detachInternalHardlinks: true,
   });
 }
 

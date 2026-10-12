@@ -23,9 +23,9 @@ import { basename, dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { BUNDLED_PLUGIN_ROOT_DIR } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, describe, expect, it } from "vitest";
-import { assertArtifactTreeReadable } from "./shared/artifact-permissions.js";
 import { isMap, parseAllDocuments } from "yaml";
 import { useAutoCleanupTempDirTracker } from "../test/helpers/temp-dir.js";
+import { assertArtifactTreeReadable } from "./shared/artifact-permissions.js";
 import { resolveTestNodeExecPath } from "./test-utils/node-process.js";
 
 const repoRoot = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
@@ -458,6 +458,10 @@ describe("Dockerfile", () => {
         }
         const launcher = join(image, "scripts/runtime.mjs");
         const declaredLauncher = join(image, "packages/ai/dist/launcher.cjs");
+        // Docker COPY retains dependency hardlinks, unlike Node cp used by this fixture.
+        const linkedLauncher = join(image, "packages/ai/dist/launcher-alias.cjs");
+        await link(declaredLauncher, linkedLauncher);
+        const launcherOwner = await stat(declaredLauncher);
         const entries = [
           image,
           ...(await readdir(image, { recursive: true })).map((file) => join(image, file)),
@@ -465,7 +469,7 @@ describe("Dockerfile", () => {
         const ownedEntries = [];
         for (const file of entries) {
           const entry = await lstat(file);
-          if (entry.isFile() || entry.isDirectory()) {
+          if ((entry.isFile() || entry.isDirectory()) && (await realpath(file)) === file) {
             ownedEntries.push({ file, directory: entry.isDirectory() });
           }
         }
@@ -496,6 +500,8 @@ describe("Dockerfile", () => {
           }
         };
         for (const generation of ["cold", "warm"]) {
+          await unlink(linkedLauncher);
+          await link(declaredLauncher, linkedLauncher);
           for (const { file, directory } of ownedEntries) {
             await chmod(file, file === image ? 0o755 : directory ? directoryMode : fileMode);
           }
@@ -511,6 +517,14 @@ describe("Dockerfile", () => {
               directory || file === launcher || file === declaredLauncher ? 0o755 : 0o644,
             );
           }
+          for (const file of [declaredLauncher, linkedLauncher]) {
+            expect(await stat(file)).toMatchObject({
+              nlink: 1,
+              uid: launcherOwner.uid,
+              gid: launcherOwner.gid,
+            });
+          }
+          expect(await readFile(linkedLauncher, "utf8")).toBe("packages/ai/dist/launcher.cjs");
           expect(() =>
             assertArtifactTreeReadable(image, {
               allowLinksWithin: image,

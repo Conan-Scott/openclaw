@@ -6,6 +6,7 @@ type ArtifactOptions = {
   allowLinksWithin?: string;
   publishedRoot?: string;
   preserveExecutable?: boolean;
+  detachInternalHardlinks?: boolean;
   ownerRoot?: string;
   readFiles?: boolean;
   resolveLinks?: boolean;
@@ -153,14 +154,42 @@ export function normalizeGeneratedArtifactTree(
   const root = path.resolve(rootPath);
   const required = executablePaths(root, options.executableFiles);
   const entries = artifactEntries(root, options, false);
+  const links = new Map<string, number>();
+  if (options.detachInternalHardlinks) {
+    for (const { stat } of entries) {
+      if (stat.isFile() && stat.nlink > 1) {
+        const inode = `${stat.dev}:${stat.ino}`;
+        links.set(inode, (links.get(inode) ?? 0) + 1);
+      }
+    }
+  }
   for (const { file, stat } of entries) {
-    if (stat.isFile() && stat.nlink !== 1) {
+    if (stat.isFile() && stat.nlink !== 1 && links.get(`${stat.dev}:${stat.ino}`) !== stat.nlink) {
       throw new Error(`Artifact mutation requires an exclusively owned file inode: ${file}`);
     }
   }
   for (const { file, stat } of entries) {
     const mode = options.preserveExecutable === false ? 0 : stat.mode;
-    fs.chmodSync(file, generatedArtifactMode(mode, stat.isDirectory(), required.has(file)));
+    const publishedMode = generatedArtifactMode(mode, stat.isDirectory(), required.has(file));
+    // A no-op chmod can copy an entire lower-layer file into a Docker image layer.
+    if ((stat.mode & 0o7777) === publishedMode) {
+      continue;
+    }
+    if (stat.isFile() && stat.nlink > 1) {
+      // Image dependencies can link their own binaries (for example esbuild).
+      // Every alias was accounted for before mutation; an outside alias refuses.
+      // Detach them so distinct launcher declarations cannot change sibling modes.
+      const temporary = fs.mkdtempSync(path.join(path.dirname(file), ".artifact-copy-"));
+      try {
+        const copy = path.join(temporary, "file");
+        fs.copyFileSync(file, copy);
+        fs.chownSync(copy, stat.uid, stat.gid);
+        fs.renameSync(copy, file);
+      } finally {
+        fs.rmSync(temporary, { recursive: true, force: true });
+      }
+    }
+    fs.chmodSync(file, publishedMode);
   }
 }
 
