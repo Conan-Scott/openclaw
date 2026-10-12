@@ -9,13 +9,17 @@ import { GatewayClient } from "openclaw/plugin-sdk/gateway-runtime";
 import { redactSensitiveText } from "openclaw/plugin-sdk/logging-core";
 import { afterEach, describe, expect, it } from "vitest";
 import { createQaGatewayChild } from "../../../../extensions/qa-lab/api.js";
-import type { AuditRunInspectResult } from "../../../../packages/gateway-protocol/src/index.js";
+import type {
+  AuditRunInspectResult,
+  SessionPlacement,
+} from "../../../../packages/gateway-protocol/src/index.js";
 import {
   NODE_WORKER_BUNDLE_INSTALL_COMMAND,
   NODE_WORKER_SUPERVISOR_LAUNCH_COMMAND,
   NODE_WORKER_SUPERVISOR_STATUS_COMMAND,
   NODE_WORKER_WORKSPACE_EXEC_COMMAND,
 } from "../../../../src/infra/node-commands.js";
+import { createDeferred, withinTest } from "../../../helpers/promise.js";
 import { stopQaGatewayFixture } from "../../../helpers/qa-gateway-cleanup.js";
 import { useAutoCleanupTempDirTracker } from "../../../helpers/temp-dir.js";
 import {
@@ -81,7 +85,7 @@ describe("node worker launch wire", () => {
   it(
     "transfers and reconciles a gateway-push workspace through a device runner",
     { timeout: TEST_TIMEOUT_MS },
-    async () => {
+    async ({ signal }) => {
       const root = tempDirs.make("openclaw-node-worker-launch-wire-");
       const provider = await startMidturnProvider();
       const published = await createPublishedWireWorkspace(root);
@@ -100,6 +104,35 @@ describe("node worker launch wire", () => {
       let workerAuditBeforeRestart: string | undefined;
       let testFailure: { error: unknown } | undefined;
       let cleanupFailures: unknown[];
+      const placementChanges = new Map<string, ReturnType<typeof createDeferred<void>>>();
+      const waitForWorkspaceSettlement = async (key: string) => {
+        try {
+          for (;;) {
+            // Arm before reading so a publication during the RPC cannot be missed.
+            const changed = createDeferred();
+            placementChanges.set(key, changed);
+            const described = await withinTest(
+              operator!.request<{ session?: { placement?: SessionPlacement } }>(
+                "sessions.describe",
+                { key },
+              ),
+              signal,
+            );
+            const placement = described.session?.placement;
+            if (!placement || placement.state === "failed" || placement.state === "reclaimed") {
+              throw new Error(
+                `Workspace settlement failed for ${key}: ${JSON.stringify(placement)}`,
+              );
+            }
+            if (placement.state === "active" && !placement.workspaceResultReconciling) {
+              return;
+            }
+            await withinTest(changed.promise, signal);
+          }
+        } finally {
+          placementChanges.delete(key);
+        }
+      };
 
       try {
         gateway = await startPairedNodeWorkerGateway({
@@ -108,7 +141,21 @@ describe("node worker launch wire", () => {
           executionIdentity: true,
           useRepoCli: false,
         });
-        operator = await connectWireClient({ gateway, role: "operator", identity: null });
+        operator = await connectWireClient({
+          gateway,
+          role: "operator",
+          identity: null,
+          onEvent: (event) => {
+            if (
+              event.event === "sessions.changed" &&
+              isRecord(event.payload) &&
+              typeof event.payload.sessionKey === "string"
+            ) {
+              placementChanges.get(event.payload.sessionKey)?.resolve();
+            }
+          },
+        });
+        await operator.request("sessions.subscribe", {});
         workerNode = await createPairedNodeWorkerHost({
           gateway,
           operator,
@@ -274,6 +321,8 @@ describe("node worker launch wire", () => {
               wireMessageText(message).includes(BASELINE_REPLY),
           ),
         ).toHaveLength(1);
+        // agent.wait settles the reply, not the separately fenced workspace result.
+        await waitForWorkspaceSettlement(SESSION_KEY);
         const described = (await gateway.call("sessions.describe", { key: SESSION_KEY })) as {
           session?: { execCwd?: string; spawnedCwd?: string; placement?: Record<string, unknown> };
         };
@@ -345,6 +394,7 @@ describe("node worker launch wire", () => {
         );
         expect(permissionReplies).toHaveLength(1);
         expect(wireMessageText(permissionReplies?.[0])).toContain(provider.execOutput);
+        await waitForWorkspaceSettlement(SESSION_KEY);
         const permissionDescribed = (await gateway.call("sessions.describe", {
           key: SESSION_KEY,
         })) as { session?: { execCwd?: string; spawnedCwd?: string } };
@@ -428,6 +478,7 @@ describe("node worker launch wire", () => {
           ),
         ).resolves.toMatchObject({ status: "ok" });
         await legacyWorkerNode.waitForInvokes();
+        await waitForWorkspaceSettlement(legacySessionKey);
         expect(legacyWorkerNode.invokeErrors).toEqual([]);
         expect(legacyWorkerNode.commands).toContain(NODE_WORKER_SUPERVISOR_LAUNCH_COMMAND);
         expect(legacyBundlePrewarm).toBeUndefined();
@@ -512,7 +563,7 @@ describe("node worker launch wire", () => {
             );
             const waveGateway = gateway;
             const waits = Promise.all(
-              loadRunIds.map(async (loadRunId) => {
+              loadRunIds.map(async (loadRunId, index) => {
                 const completedLoad = await operator!.request<{ status?: string }>(
                   "agent.wait",
                   { runId: loadRunId, timeoutMs: PROOF_TIMEOUT_MS },
@@ -522,6 +573,7 @@ describe("node worker launch wire", () => {
                   completedLoad,
                   `load run ${loadRunId} failed\n${redactSensitiveText(JSON.stringify(completedLoad)).slice(0, 4000)}\n${waveGateway.logs().slice(-12_000)}`,
                 ).toMatchObject({ status: "ok" });
+                await waitForWorkspaceSettlement(loadSessions[index]!);
               }),
             );
             // Failed turns may never upload; observe their failure while waiting for finalization.
