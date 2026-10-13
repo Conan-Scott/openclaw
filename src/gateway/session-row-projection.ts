@@ -209,8 +209,22 @@ export async function createSessionRowProjection(params: records.ProjectionOptio
   }
   const matching = (query: records.Query, kind = "key") =>
     rowScope.selectMatchingSessionRows({ rows, indexes, scope }, query, kind);
+  const assertActive = () => {
+    if (disposed) {
+      throw new Error("Session row projection is no longer active");
+    }
+  };
   const lookup = (query: records.Lookup) =>
-    disposed ? undefined : rowReads.lookupSessionRow(query, { cfg, rows, byKey, scope, stores });
+    disposed
+      ? undefined
+      : rowReads.lookupSessionRow(query, {
+          cfg,
+          rows,
+          byKey,
+          scope,
+          stores,
+          assertCurrent: assertActive,
+        });
   function referenced(ref: string) {
     return records.firstReferenced(ref, rows, byKey, stores.keys());
   }
@@ -372,6 +386,7 @@ export async function createSessionRowProjection(params: records.ProjectionOptio
       env,
       inOwnerContext,
       isReady: () => !disposed && !topologyDirty,
+      assertCurrent: assertActive,
       preparedContext: () => metadata.readPrepared(epoch),
       lookup,
       config: () => cfg,
@@ -480,7 +495,6 @@ export async function createSessionRowProjection(params: records.ProjectionOptio
     mark,
     read: (id) => rows.get(id),
     store: (path) => stores.get(path),
-    invalidate: backfill.remove,
     refresh(id, retained) {
       const row = rows.get(id);
       if (!row || (isCold(row) && !row.pendingDatabaseFacts)) {
@@ -621,6 +635,7 @@ export async function createSessionRowProjection(params: records.ProjectionOptio
     });
   const projection = {
     ...rowReads.createSessionRowLookup({
+      assertCurrent: assertActive,
       state: () => ({
         cfg,
         scope,

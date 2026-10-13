@@ -1,7 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { describePendingFakeTimers } from "../../test/helpers/fake-timer-diagnostics.js";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { resolveAgentDir } from "../agents/agent-scope-config.js";
+import { setLoggerOverride } from "../logging/logger.js";
+import { loggingState } from "../logging/state.js";
 import { AsyncWorkScope } from "../shared/async-work-scope.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import { withEnvAsync } from "../test-utils/env.js";
@@ -56,6 +60,8 @@ describe("session cost usage refresh", () => {
         return Promise.resolve("refreshed");
       });
 
+      // Process-owned directory observation must not borrow the refresh test's clock.
+      resolveAgentDir(config, params.agentId);
       vi.useFakeTimers();
       try {
         expect(await loadCostUsageSummaryFromCache(params)).toMatchObject({
@@ -97,7 +103,7 @@ describe("session cost usage refresh", () => {
         expect(refresh).toHaveBeenCalledTimes(12);
         await vi.advanceTimersByTimeAsync(1);
         expect(refresh).toHaveBeenCalledTimes(13);
-        expect(vi.getTimerCount()).toBe(0);
+        expect(vi.getTimerCount(), describePendingFakeTimers()).toBe(0);
         expect(
           await loadCostUsageSummaryFromCache({ ...params, requestRefresh: false }),
         ).toMatchObject({
@@ -116,7 +122,7 @@ describe("session cost usage refresh", () => {
           ).toMatchObject({
             cacheStatus: { status: "stale" },
           });
-          expect(vi.getTimerCount()).toBe(0);
+          expect(vi.getTimerCount(), describePendingFakeTimers()).toBe(0);
         } finally {
           refresh.mockReset();
           vi.useRealTimers();
@@ -142,6 +148,7 @@ describe("session cost usage refresh", () => {
       ),
     );
     await withEnvAsync({ OPENCLAW_STATE_DIR: root }, async () => {
+      resolveAgentDir(config, agentId);
       vi.useFakeTimers();
       try {
         await run({ agentId, sessionFiles });
@@ -201,7 +208,7 @@ describe("session cost usage refresh", () => {
           late,
         ]);
         expect(accepted.map((params) => params.rebuildRows)).toEqual([[], [rebuild], []]);
-        expect(vi.getTimerCount()).toBe(0);
+        expect(vi.getTimerCount(), describePendingFakeTimers()).toBe(0);
       } finally {
         scope.beginClose();
         await vi.advanceTimersByTimeAsync(50);
@@ -242,13 +249,78 @@ describe("session cost usage refresh", () => {
           await vi.advanceTimersByTimeAsync(50);
           expect(events).toEqual(["refresh settled", "scope drained"]);
           expect(refresh).toHaveBeenCalledOnce();
-          expect(vi.getTimerCount()).toBe(0);
+          expect(vi.getTimerCount(), describePendingFakeTimers()).toBe(0);
         } finally {
           release.resolve();
           scope.beginClose();
           await work;
           await vi.advanceTimersByTimeAsync(50);
           await scope.drain();
+        }
+      });
+    },
+  );
+
+  it.each([
+    { failure: "abort", closing: true, level: "debug" },
+    { failure: "abort", closing: false, level: "warn" },
+    { failure: "write", closing: true, level: "warn" },
+    { failure: "cleanup", closing: true, level: "warn" },
+  ] as const)(
+    "logs $failure at $level with closing=$closing and settles the refresh queue",
+    async ({ failure, closing, level }) => {
+      await withRefreshFixture(async ({ agentId, sessionFiles }) => {
+        const scope = new AsyncWorkScope();
+        const release = createDeferredCore<"refreshed">();
+        const refresh = vi.mocked(refreshCostUsageCacheForAgent).mockReturnValue(release.promise);
+        const previousLogging = {
+          overrideSettings: loggingState.overrideSettings,
+          cachedLogger: loggingState.cachedLogger,
+          cachedSettings: loggingState.cachedSettings,
+          cachedConsoleSettings: loggingState.cachedConsoleSettings,
+          rawConsole: loggingState.rawConsole,
+          consoleSubsystemFilter: loggingState.consoleSubsystemFilter,
+        };
+        const write = vi.fn();
+        setLoggerOverride({ level: "silent", consoleLevel: "debug", consoleStyle: "json" });
+        loggingState.rawConsole = { log: write, info: write, warn: write, error: write };
+        loggingState.consoleSubsystemFilter = null;
+        try {
+          scope.run(() =>
+            requestCostUsageCacheRefresh({
+              config,
+              agentId,
+              storePath: path.dirname(sessionFiles[0]),
+            }),
+          );
+          await vi.advanceTimersByTimeAsync(0);
+          expect(refresh).toHaveBeenCalledOnce();
+          if (closing) {
+            scope.beginClose();
+          }
+          const aborted = new DOMException("This operation was aborted", "AbortError");
+          const writeFailure = new Error("usage checkpoint write failed");
+          release.reject(
+            failure === "abort"
+              ? aborted
+              : failure === "write"
+                ? writeFailure
+                : new AggregateError([aborted, writeFailure], aborted.message),
+          );
+          await scope.runWhenIdle(() => {});
+          expect(write).toHaveBeenCalledExactlyOnceWith(
+            expect.stringContaining(`"level":"${level}"`),
+          );
+          expect(write).toHaveBeenCalledWith(expect.stringContaining("background refresh"));
+          expect(refresh).toHaveBeenCalledOnce();
+          expect(vi.getTimerCount(), describePendingFakeTimers()).toBe(0);
+        } finally {
+          try {
+            release.resolve("refreshed");
+            await scope.drain();
+          } finally {
+            Object.assign(loggingState, previousLogging);
+          }
         }
       });
     },
@@ -279,7 +351,7 @@ describe("session cost usage refresh", () => {
           await scope.drain();
           await vi.advanceTimersByTimeAsync(50);
           expect(refresh).toHaveBeenCalledTimes(callsBeforeClose);
-          expect(vi.getTimerCount()).toBe(0);
+          expect(vi.getTimerCount(), describePendingFakeTimers()).toBe(0);
         } finally {
           scope.beginClose();
           await vi.advanceTimersByTimeAsync(50);
